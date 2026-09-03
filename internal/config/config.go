@@ -20,6 +20,7 @@ type Config struct {
 	GitHubAPIURL          string
 	GitHubToken           string
 	GitHubWebhookSecret   string
+	OperatorToken         string
 	ReconcileInterval     time.Duration
 	EventPollInterval     time.Duration
 	EventLeaseDuration    time.Duration
@@ -59,6 +60,7 @@ func Load() (Config, error) {
 		GitHubAPIURL:          envString("SYNFACTORY_GITHUB_API_URL", "https://api.github.com"),
 		GitHubToken:           os.Getenv("SYNFACTORY_GITHUB_TOKEN"),
 		GitHubWebhookSecret:   os.Getenv("SYNFACTORY_GITHUB_WEBHOOK_SECRET"),
+		OperatorToken:         os.Getenv("SYNFACTORY_OPERATOR_TOKEN"),
 		ReconcileInterval:     envDuration("SYNFACTORY_RECONCILE_INTERVAL", time.Hour),
 		EventPollInterval:     envDuration("SYNFACTORY_EVENT_POLL_INTERVAL", 5*time.Second),
 		EventLeaseDuration:    envDuration("SYNFACTORY_EVENT_LEASE_DURATION", 30*time.Second),

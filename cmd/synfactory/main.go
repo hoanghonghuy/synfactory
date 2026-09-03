@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hoanghonghuy/synfactory/internal/config"
+	"github.com/hoanghonghuy/synfactory/internal/controlcenter"
 	"github.com/hoanghonghuy/synfactory/internal/domain"
 	githubfactory "github.com/hoanghonghuy/synfactory/internal/github"
 	"github.com/hoanghonghuy/synfactory/internal/operations"
@@ -154,6 +155,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 		wake = bus.all
 	}
 	metrics := operations.Handler{Store: store, WorkerStaleAfter: cfg.WorkerStaleAfter}
+	operatorAPI := controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter}
 	mux := http.NewServeMux()
 	mux.Handle("/webhooks/github", githubfactory.NewWebhookHandler(cfg.GitHubWebhookSecret, store, wake))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -170,6 +172,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	})
 	mux.HandleFunc("GET /ops", metrics.JSON)
 	mux.HandleFunc("GET /metrics", metrics.Prometheus)
+	operatorAPI.Register(mux)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
