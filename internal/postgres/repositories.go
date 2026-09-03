@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 )
 
@@ -21,8 +22,9 @@ ON CONFLICT (provider, full_name) DO UPDATE SET
     default_branch = EXCLUDED.default_branch,
     enabled = EXCLUDED.enabled,
     config = EXCLUDED.config,
+    config_version = repositories.config_version + 1,
     updated_at = NOW()
-RETURNING id, provider, full_name, default_branch, enabled, config, created_at, updated_at`,
+RETURNING id, provider, full_name, default_branch, enabled, config, config_version, created_at, updated_at`,
 		repository.ID,
 		repository.Provider,
 		repository.FullName,
@@ -35,7 +37,7 @@ RETURNING id, provider, full_name, default_branch, enabled, config, created_at, 
 
 func (s *Store) GetRepository(ctx context.Context, id string) (Repository, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, provider, full_name, default_branch, enabled, config, created_at, updated_at
+SELECT id, provider, full_name, default_branch, enabled, config, config_version, created_at, updated_at
 FROM repositories
 WHERE id = $1`, id)
 	repository, err := scanRepository(row)
@@ -46,11 +48,22 @@ WHERE id = $1`, id)
 }
 
 func (s *Store) ListRepositories(ctx context.Context) ([]Repository, error) {
-	rows, err := s.db.QueryContext(ctx, `
-SELECT id, provider, full_name, default_branch, enabled, config, created_at, updated_at
-FROM repositories
-WHERE enabled = TRUE
-ORDER BY provider, full_name`)
+	return s.listRepositories(ctx, true)
+}
+
+func (s *Store) ListAllRepositories(ctx context.Context) ([]Repository, error) {
+	return s.listRepositories(ctx, false)
+}
+
+func (s *Store) listRepositories(ctx context.Context, enabledOnly bool) ([]Repository, error) {
+	query := `
+SELECT id, provider, full_name, default_branch, enabled, config, config_version, created_at, updated_at
+FROM repositories`
+	if enabledOnly {
+		query += ` WHERE enabled = TRUE`
+	}
+	query += ` ORDER BY provider, full_name`
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("list repositories: %w", err)
 	}
@@ -70,6 +83,91 @@ ORDER BY provider, full_name`)
 	return repositories, nil
 }
 
+func (s *Store) MutateRepository(ctx context.Context, repository Repository, action, actor string) (Repository, error) {
+	if repository.ID == "" || repository.Provider == "" || repository.FullName == "" {
+		return Repository{}, fmt.Errorf("repository id, provider and full name are required")
+	}
+	if action != "register" && action != "update" && action != "enable" && action != "disable" {
+		return Repository{}, fmt.Errorf("unsupported repository action %q", action)
+	}
+	if actor == "" {
+		actor = "operator"
+	}
+	if repository.DefaultBranch == "" {
+		repository.DefaultBranch = "main"
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Repository{}, fmt.Errorf("begin repository mutation: %w", err)
+	}
+	defer tx.Rollback()
+
+	var previous json.RawMessage
+	var oldVersion int64
+	err = tx.QueryRowContext(ctx, `SELECT config, config_version FROM repositories WHERE id = $1 FOR UPDATE`, repository.ID).Scan(&previous, &oldVersion)
+	if err != nil && err != sql.ErrNoRows {
+		return Repository{}, fmt.Errorf("lock repository: %w", err)
+	}
+	if err == sql.ErrNoRows {
+		previous = json.RawMessage(`{}`)
+		oldVersion = 0
+	}
+
+	var saved Repository
+	err = tx.QueryRowContext(ctx, `
+INSERT INTO repositories (id, provider, full_name, default_branch, enabled, config, config_version)
+VALUES ($1, $2, $3, $4, $5, $6, 1)
+ON CONFLICT (id) DO UPDATE SET
+    provider = EXCLUDED.provider,
+    full_name = EXCLUDED.full_name,
+    default_branch = EXCLUDED.default_branch,
+    enabled = EXCLUDED.enabled,
+    config = EXCLUDED.config,
+    config_version = repositories.config_version + 1,
+    updated_at = NOW()
+RETURNING id, provider, full_name, default_branch, enabled, config, config_version, created_at, updated_at`,
+		repository.ID, repository.Provider, repository.FullName, repository.DefaultBranch,
+		repository.Enabled, jsonOrEmpty(repository.Config),
+	).Scan(&saved.ID, &saved.Provider, &saved.FullName, &saved.DefaultBranch, &saved.Enabled, &saved.Config, &saved.ConfigVersion, &saved.CreatedAt, &saved.UpdatedAt)
+	if err != nil {
+		return Repository{}, fmt.Errorf("save repository: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO repository_config_audit (repository_id, config_version, action, actor, previous_config, new_config)
+VALUES ($1, $2, $3, $4, $5, $6)`, saved.ID, saved.ConfigVersion, action, actor, jsonOrEmpty(previous), jsonOrEmpty(saved.Config)); err != nil {
+		return Repository{}, fmt.Errorf("audit repository mutation: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Repository{}, fmt.Errorf("commit repository mutation: %w", err)
+	}
+	_ = oldVersion
+	return saved, nil
+}
+
+func (s *Store) ListRepositoryConfigAudit(ctx context.Context, repositoryID string) ([]RepositoryConfigAudit, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, repository_id, config_version, action, actor, previous_config, new_config, created_at
+FROM repository_config_audit
+WHERE repository_id = $1
+ORDER BY config_version DESC`, repositoryID)
+	if err != nil {
+		return nil, fmt.Errorf("list repository audit: %w", err)
+	}
+	defer rows.Close()
+
+	var result []RepositoryConfigAudit
+	for rows.Next() {
+		var item RepositoryConfigAudit
+		if err := rows.Scan(&item.ID, &item.RepositoryID, &item.ConfigVersion, &item.Action, &item.Actor, &item.PreviousConfig, &item.NewConfig, &item.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan repository audit: %w", err)
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -83,6 +181,7 @@ func scanRepository(row rowScanner) (Repository, error) {
 		&repository.DefaultBranch,
 		&repository.Enabled,
 		&repository.Config,
+		&repository.ConfigVersion,
 		&repository.CreatedAt,
 		&repository.UpdatedAt,
 	); err != nil {
