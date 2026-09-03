@@ -39,6 +39,11 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: Resolve dependencies
+        run: |
+          go mod tidy
+          cat go.sum
+
       - name: Format check
         run: |
           test -z "$(gofmt -l .)"
