@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -38,7 +39,7 @@ func TestOpenAIChatCompletionAndSecretRedaction(t *testing.T) {
 			t.Fatalf("unexpected auth %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chat_1","choices":[{"message":{"content":"hello"}}]}`))
+		_, _ = w.Write([]byte(`{"id":"chat_1","choices":[{"message":{"content":"hello top-secret-key"}}],"echo":"top-secret-key"}`))
 	}))
 	defer server.Close()
 	adapter, err := NewOpenAIAdapter("router", RuntimeConfig{Kind: ProviderOpenAI, BaseURL: server.URL + "/v1", APIStyle: "chat_completions", Model: "m", APIKeyEnv: "TEST_API_KEY"}, server.Client())
@@ -49,8 +50,12 @@ func TestOpenAIChatCompletionAndSecretRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Summary != "hello" || strings.Contains(result.Output, "top-secret-key") {
+	if result.Summary != "hello [REDACTED]" || strings.Contains(result.Output, "top-secret-key") || strings.Contains(result.Summary, "top-secret-key") {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	encoded := fmt.Sprint(result.Events)
+	if strings.Contains(encoded, "top-secret-key") {
+		t.Fatalf("secret leaked in normalized events: %s", encoded)
 	}
 }
 
