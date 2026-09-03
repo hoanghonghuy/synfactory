@@ -1,0 +1,114 @@
+name: synfactory
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-synfactory}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-synfactory}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-synfactory} -d ${POSTGRES_DB:-synfactory}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [factory]
+
+  api:
+    build:
+      context: .
+      target: control
+    restart: unless-stopped
+    command: ["api"]
+    env_file: .env
+    environment:
+      SYNFACTORY_MODE: api
+      SYNFACTORY_ADDR: :8080
+    ports:
+      - "127.0.0.1:${SYNFACTORY_LOCAL_API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [factory]
+
+  scheduler:
+    build:
+      context: .
+      target: control
+    restart: unless-stopped
+    command: ["scheduler"]
+    env_file: .env
+    environment:
+      SYNFACTORY_MODE: scheduler
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/synfactory", "check"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [factory]
+
+  worker:
+    build:
+      context: .
+      target: worker
+    restart: unless-stopped
+    command: ["worker"]
+    user: "0:0"
+    env_file: .env
+    environment:
+      SYNFACTORY_MODE: worker
+      SYNFACTORY_RUNTIME_CONFIG: /etc/synfactory/runtimes.json
+      HOME: /root
+      PATH: /opt/synfactory/agent-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - ${SYNFACTORY_REPOSITORY_ROOT}:${SYNFACTORY_REPOSITORY_ROOT}
+      - ${SYNFACTORY_WORKSPACE_ROOT}:${SYNFACTORY_WORKSPACE_ROOT}
+      - ${SYNFACTORY_RUNTIME_CONFIG_HOST:-./config/runtimes.local.json}:/etc/synfactory/runtimes.json:ro
+      - ${SYNFACTORY_AGENT_HOME:-./data/agent-home}:/root
+      - ${SYNFACTORY_AGENT_BIN:-./data/agent-bin}:/opt/synfactory/agent-bin:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/synfactory", "check"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [factory]
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [factory]
+
+networks:
+  factory:
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
