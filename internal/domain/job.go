@@ -30,6 +30,7 @@ const (
 
 var (
 	ErrInvalidTransition  = errors.New("invalid job state transition")
+	ErrJobNotAvailable    = errors.New("job is not available yet")
 	ErrLeaseOwnerMismatch = errors.New("lease owner mismatch")
 )
 
@@ -50,11 +51,14 @@ type Job struct {
 	LastError   string
 }
 
-func (j *Job) Lease(workerID string, until time.Time) error {
+func (j *Job) Lease(workerID string, now, until time.Time) error {
 	if j.Status != JobQueued && j.Status != JobRetryWait {
 		return ErrInvalidTransition
 	}
-	if workerID == "" || until.IsZero() {
+	if now.Before(j.AvailableAt) {
+		return ErrJobNotAvailable
+	}
+	if workerID == "" || !until.After(now) {
 		return ErrInvalidTransition
 	}
 
