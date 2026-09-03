@@ -75,10 +75,10 @@ func (h Handler) authorize(next http.Handler) http.Handler {
 }
 
 type overviewResponse struct {
-	GeneratedAt time.Time                   `json:"generated_at"`
-	Stats       postgres.OperationalStats   `json:"stats"`
-	Workers     []workerDTO                 `json:"workers"`
-	Workflows   []workflowDTO               `json:"attention_workflows"`
+	GeneratedAt time.Time                 `json:"generated_at"`
+	Stats       postgres.OperationalStats `json:"stats"`
+	Workers     []workerDTO               `json:"workers"`
+	Workflows   []workflowDTO             `json:"attention_workflows"`
 }
 
 func (h Handler) overview(w http.ResponseWriter, r *http.Request) {
