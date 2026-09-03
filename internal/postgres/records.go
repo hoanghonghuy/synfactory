@@ -14,8 +14,20 @@ type Repository struct {
 	DefaultBranch string
 	Enabled       bool
 	Config        json.RawMessage
+	ConfigVersion int64
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+type RepositoryConfigAudit struct {
+	ID             int64
+	RepositoryID   string
+	ConfigVersion  int64
+	Action         string
+	Actor          string
+	PreviousConfig json.RawMessage
+	NewConfig      json.RawMessage
+	CreatedAt      time.Time
 }
 
 type InboxEvent struct {
