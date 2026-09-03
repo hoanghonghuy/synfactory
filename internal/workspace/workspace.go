@@ -11,8 +11,8 @@ type Mode string
 type Access string
 
 const (
-	ModeWorktree Mode = "worktree"
-	ModeDocker   Mode = "docker"
+	ModeWorktree    Mode   = "worktree"
+	ModeDocker      Mode   = "docker"
 	AccessReadOnly  Access = "read_only"
 	AccessReadWrite Access = "read_write"
 )

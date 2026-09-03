@@ -212,17 +212,30 @@ func mergeEnv(base []string, overrides map[string]string) []string {
 	return result
 }
 
-type limitedBuffer struct { buf bytes.Buffer; limit int64; truncated bool }
+type limitedBuffer struct {
+	buf       bytes.Buffer
+	limit     int64
+	truncated bool
+}
+
 func (b *limitedBuffer) Write(p []byte) (int, error) {
 	original := len(p)
 	remaining := b.limit - int64(b.buf.Len())
-	if remaining <= 0 { b.truncated = true; return original, nil }
-	if int64(len(p)) > remaining { p = p[:remaining]; b.truncated = true }
+	if remaining <= 0 {
+		b.truncated = true
+		return original, nil
+	}
+	if int64(len(p)) > remaining {
+		p = p[:remaining]
+		b.truncated = true
+	}
 	_, _ = b.buf.Write(p)
 	return original, nil
 }
 func (b *limitedBuffer) String() string {
-	if !b.truncated { return b.buf.String() }
+	if !b.truncated {
+		return b.buf.String()
+	}
 	var out strings.Builder
 	_, _ = io.Copy(&out, bytes.NewReader(b.buf.Bytes()))
 	out.WriteString("\n[output truncated]\n")

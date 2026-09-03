@@ -27,16 +27,16 @@ type Plan struct {
 }
 
 type CheckResult struct {
-	Name        string `json:"name"`
-	Command     string `json:"command"`
-	Args        []string `json:"args,omitempty"`
-	ExitCode    int `json:"exit_code"`
-	Passed      bool `json:"passed"`
-	Required    bool `json:"required"`
-	Stdout      string `json:"stdout,omitempty"`
-	Stderr      string `json:"stderr,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
-	FinishedAt  time.Time `json:"finished_at"`
+	Name       string    `json:"name"`
+	Command    string    `json:"command"`
+	Args       []string  `json:"args,omitempty"`
+	ExitCode   int       `json:"exit_code"`
+	Passed     bool      `json:"passed"`
+	Required   bool      `json:"required"`
+	Stdout     string    `json:"stdout,omitempty"`
+	Stderr     string    `json:"stderr,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
 }
 
 type Report struct {
@@ -65,7 +65,7 @@ func (v Verifier) Verify(ctx context.Context, handle workspace.Handle, plan Plan
 		}
 		process, err := supervisor.Run(ctx, factoryruntime.CommandSpec{
 			ExecutionID: fmt.Sprintf("verify-%s-%d", handle.ID, i+1),
-			Name: check.Command, Args: check.Args, Dir: handle.Path,
+			Name:        check.Command, Args: check.Args, Dir: handle.Path,
 			Timeout: check.Timeout, Sandbox: handle.Sandbox,
 		})
 		result := CheckResult{Name: check.Name, Command: check.Command, Args: append([]string(nil), check.Args...), ExitCode: process.ExitCode, Passed: err == nil && process.ExitCode == 0, Required: check.Required, Stdout: process.Stdout, Stderr: process.Stderr, StartedAt: process.StartedAt, FinishedAt: process.FinishedAt}
@@ -75,9 +75,9 @@ func (v Verifier) Verify(ctx context.Context, handle workspace.Handle, plan Plan
 		}
 	}
 	encoded, err := json.Marshal(struct {
-		Passed bool `json:"passed"`
-		Revision string `json:"revision"`
-		Checks []CheckResult `json:"checks"`
+		Passed   bool          `json:"passed"`
+		Revision string        `json:"revision"`
+		Checks   []CheckResult `json:"checks"`
 	}{report.Passed, report.Revision, report.Checks})
 	if err != nil {
 		return Report{}, err
