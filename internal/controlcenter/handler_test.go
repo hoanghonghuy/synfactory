@@ -48,12 +48,14 @@ func (testStore) ListWorkflowActions(context.Context, string) ([]postgres.Workfl
 func (testStore) ListWorkflowHistory(context.Context, string) ([]postgres.WorkflowHistoryRecord, error) {
 	return nil, nil
 }
-func (testStore) ListRuns(context.Context, postgres.RunFilter) ([]postgres.Run, error) { return nil, nil }
+func (testStore) ListRuns(context.Context, postgres.RunFilter) ([]postgres.Run, error) {
+	return nil, nil
+}
 func (testStore) GetRun(context.Context, string) (postgres.Run, error) {
 	return postgres.Run{}, postgres.ErrNotFound
 }
 func (testStore) ListEvidence(context.Context, string) ([]postgres.Evidence, error) { return nil, nil }
-func (testStore) ListWorkers(context.Context) ([]postgres.Worker, error) { return nil, nil }
+func (testStore) ListWorkers(context.Context) ([]postgres.Worker, error)            { return nil, nil }
 
 func TestOperatorAPIDisabledWithoutToken(t *testing.T) {
 	mux := http.NewServeMux()
