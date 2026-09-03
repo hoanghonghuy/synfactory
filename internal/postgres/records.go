@@ -56,6 +56,7 @@ type Run struct {
 	ID         string
 	JobID      string
 	Attempt    int
+	Sequence   int
 	Runtime    string
 	Model      string
 	SessionID  string

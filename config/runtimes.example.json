@@ -1,0 +1,76 @@
+{
+  "runtimes": {
+    "codex-primary": {
+      "kind": "codex",
+      "binary": "codex",
+      "secret_env": ["OPENAI_API_KEY"]
+    },
+    "cursor-primary": {
+      "kind": "cursor",
+      "binary": "cursor-agent",
+      "secret_env": ["CURSOR_API_KEY"],
+      "auto_approve": false
+    },
+    "antigravity-primary": {
+      "kind": "antigravity",
+      "binary": "agy",
+      "auto_approve": false
+    },
+    "claude-review": {
+      "kind": "claude",
+      "binary": "claude",
+      "secret_env": ["ANTHROPIC_API_KEY"],
+      "auto_approve": false
+    },
+    "opencode-fallback": {
+      "kind": "opencode",
+      "binary": "opencode",
+      "auto_approve": false
+    },
+    "router-fallback": {
+      "kind": "openai_compatible",
+      "base_url": "http://127.0.0.1:20128/v1",
+      "api_style": "responses",
+      "api_key_env": "SYNFACTORY_ROUTER_API_KEY",
+      "model": "replace-with-router-model"
+    }
+  },
+  "roles": {
+    "pm": {
+      "chain": [
+        {"runtime": "antigravity-primary"},
+        {"runtime": "router-fallback"}
+      ],
+      "fallback_on": ["unavailable", "transient"]
+    },
+    "team_lead": {
+      "chain": [
+        {"runtime": "codex-primary"},
+        {"runtime": "claude-review"}
+      ],
+      "fallback_on": ["unavailable", "transient"]
+    },
+    "developer": {
+      "chain": [
+        {"runtime": "cursor-primary"},
+        {"runtime": "codex-primary"},
+        {"runtime": "opencode-fallback"}
+      ],
+      "fallback_on": ["unavailable", "transient", "timeout"]
+    },
+    "reviewer": {
+      "chain": [
+        {"runtime": "claude-review"},
+        {"runtime": "codex-primary"}
+      ],
+      "fallback_on": ["unavailable", "transient"]
+    },
+    "ci_guardian": {
+      "chain": [
+        {"runtime": "codex-primary"},
+        {"runtime": "cursor-primary"}
+      ],
+      "fallback_on": ["unavailable", "transient", "timeout"]
+    }
+  }
+}
