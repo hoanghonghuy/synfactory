@@ -71,9 +71,9 @@ func TestOperationalStatsExposeQueueLeaseWorkflowAndWorkerHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.ApplyDecision(ctx, stored.ID, workflow.Decision{
-		TargetState: workflow.StateBlocked,
+		TargetState:   workflow.StateBlocked,
 		BlockedReason: "external_dependency",
-		Reason: "test blocker",
+		Reason:        "test blocker",
 	}, domain.RoleTeamLead, now); err != nil {
 		t.Fatal(err)
 	}
