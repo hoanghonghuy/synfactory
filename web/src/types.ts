@@ -48,27 +48,27 @@ export type Workflow = {
 }
 
 export type WorkflowAction = {
-  ID: string
-  Kind: string
-  Role: string
-  Mode: string
-  TargetState: string
-  Revision: string
-  BudgetKind: string
-  Status: string
-  JobID: string
-  Decision: string
-  CreatedAt: string
-  CompletedAt?: string
+  id: string
+  kind: string
+  role: string
+  mode: string
+  target_state: string
+  revision: string
+  budget_kind?: string
+  status: string
+  job_id?: string
+  decision?: string
+  created_at: string
+  completed_at?: string
 }
 
 export type WorkflowHistory = {
-  ID: number
-  FromState: string
-  ToState: string
-  ActorRole: string
-  Reason: string
-  CreatedAt: string
+  id: number
+  from_state: string
+  to_state: string
+  actor_role: string
+  reason?: string
+  created_at: string
 }
 
 export type WorkflowDetail = {
