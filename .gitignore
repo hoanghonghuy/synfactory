@@ -1,0 +1,25 @@
+# Go
+/bin/
+/dist/
+/coverage.out
+*.test
+
+# Local configuration / secrets
+.env
+.env.*
+!.env.example
+/configs/local.yaml
+
+# Runtime data
+/data/
+/workspaces/
+/upstreams/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Vue (future optional UI)
+/web/node_modules/
+/web/dist/
