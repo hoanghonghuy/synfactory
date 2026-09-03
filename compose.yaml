@@ -67,7 +67,9 @@ services:
       SYNFACTORY_MODE: worker
       SYNFACTORY_RUNTIME_CONFIG: /etc/synfactory/runtimes.json
       HOME: /root
-      PATH: /opt/synfactory/agent-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PATH: /opt/synfactory/agent-bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ${SYNFACTORY_REPOSITORY_ROOT}:${SYNFACTORY_REPOSITORY_ROOT}
       - ${SYNFACTORY_WORKSPACE_ROOT}:${SYNFACTORY_WORKSPACE_ROOT}
