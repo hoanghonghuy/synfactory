@@ -44,3 +44,20 @@ RETURNING id, host, capacity, draining, last_heartbeat, started_at, metadata`,
 	}
 	return heartbeat, nil
 }
+
+func (s *Store) SetWorkerDraining(ctx context.Context, workerID string, draining bool, at time.Time) error {
+	if workerID == "" {
+		return fmt.Errorf("worker id is required")
+	}
+	result, err := s.db.ExecContext(ctx, `
+UPDATE workers
+SET draining = $2, last_heartbeat = $3
+WHERE id = $1`, workerID, draining, at)
+	if err != nil {
+		return fmt.Errorf("set worker draining: %w", err)
+	}
+	if _, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("count worker draining update: %w", err)
+	}
+	return nil
+}

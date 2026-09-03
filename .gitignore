@@ -9,10 +9,15 @@
 .env.*
 !.env.example
 /configs/local.yaml
+/config/runtimes.local.json
+/config/runtimes.restored.json
+/deploy/caddy/.env
 
 # Runtime data
 /data/
 /workspaces/
+/repos/
+/backups/
 /upstreams/
 
 # IDE / OS

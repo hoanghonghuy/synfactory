@@ -61,3 +61,18 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Validate operations scripts
+        run: bash -n scripts/backup.sh scripts/restore.sh
+
+      - name: Validate Compose
+        run: |
+          cp .env.example .env
+          cp config/runtimes.example.json config/runtimes.local.json
+          docker compose --profile local-db config >/dev/null
+
+      - name: Build control image
+        run: docker build --target control -t synfactory-control:ci .
+
+      - name: Build worker image
+        run: docker build --target worker -t synfactory-worker:ci .
