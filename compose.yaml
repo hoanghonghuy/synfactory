@@ -84,6 +84,22 @@ services:
       retries: 5
     networks: [factory]
 
+  web:
+    build:
+      context: ./web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${SYNFACTORY_LOCAL_WEB_PORT:-8081}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks: [factory]
+
   caddy:
     image: caddy:2.10
     restart: unless-stopped
