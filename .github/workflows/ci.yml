@@ -37,12 +37,15 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
 
-      - name: Resolve dependencies
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify module metadata
         run: |
           go mod tidy
-          cat go.sum
+          git diff --exit-code -- go.mod go.sum
 
       - name: Format check
         run: |
