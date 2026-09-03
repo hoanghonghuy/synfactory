@@ -76,3 +76,6 @@ jobs:
 
       - name: Build worker image
         run: docker build --target worker -t synfactory-worker:ci .
+
+      - name: Build web control center image
+        run: docker build -t synfactory-web:ci ./web
