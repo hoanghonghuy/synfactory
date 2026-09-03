@@ -96,14 +96,6 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload, targe
 	return nil
 }
 
-func splitRepository(repository string) (string, string, error) {
-	parts := strings.Split(strings.TrimSpace(repository), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("repository must be owner/name")
-	}
-	return parts[0], parts[1], nil
-}
-
 func (c *Client) Merge(ctx context.Context, repository string, number int64, expectedHeadSHA string) error {
 	_, err := c.MergePullRequest(ctx, repository, number, expectedHeadSHA)
 	return err
