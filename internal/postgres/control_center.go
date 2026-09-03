@@ -193,18 +193,18 @@ ORDER BY last_heartbeat DESC, id ASC`)
 }
 
 type WorkflowActionRecord struct {
-	ID          string
-	Kind        workflow.ActionKind
-	Role        domain.Role
-	Mode        workflow.ActionMode
-	TargetState workflow.State
-	Revision    string
-	BudgetKind  string
-	Status      string
-	JobID       string
-	Decision    string
-	CreatedAt   time.Time
-	CompletedAt *time.Time
+	ID          string              `json:"id"`
+	Kind        workflow.ActionKind `json:"kind"`
+	Role        domain.Role         `json:"role"`
+	Mode        workflow.ActionMode `json:"mode"`
+	TargetState workflow.State      `json:"target_state"`
+	Revision    string              `json:"revision"`
+	BudgetKind  string              `json:"budget_kind,omitempty"`
+	Status      string              `json:"status"`
+	JobID       string              `json:"job_id,omitempty"`
+	Decision    string              `json:"decision,omitempty"`
+	CreatedAt   time.Time           `json:"created_at"`
+	CompletedAt *time.Time          `json:"completed_at,omitempty"`
 }
 
 func (s *Store) ListWorkflowActions(ctx context.Context, workflowID string) ([]WorkflowActionRecord, error) {
@@ -234,12 +234,12 @@ ORDER BY created_at ASC, id ASC`, workflowID)
 }
 
 type WorkflowHistoryRecord struct {
-	ID        int64
-	FromState workflow.State
-	ToState   workflow.State
-	ActorRole domain.Role
-	Reason    string
-	CreatedAt time.Time
+	ID        int64          `json:"id"`
+	FromState workflow.State `json:"from_state"`
+	ToState   workflow.State `json:"to_state"`
+	ActorRole domain.Role    `json:"actor_role"`
+	Reason    string         `json:"reason,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 func (s *Store) ListWorkflowHistory(ctx context.Context, workflowID string) ([]WorkflowHistoryRecord, error) {
