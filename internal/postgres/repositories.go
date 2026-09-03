@@ -45,6 +45,31 @@ WHERE id = $1`, id)
 	return repository, err
 }
 
+func (s *Store) ListRepositories(ctx context.Context) ([]Repository, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, provider, full_name, default_branch, enabled, config, created_at, updated_at
+FROM repositories
+WHERE enabled = TRUE
+ORDER BY provider, full_name`)
+	if err != nil {
+		return nil, fmt.Errorf("list repositories: %w", err)
+	}
+	defer rows.Close()
+
+	var repositories []Repository
+	for rows.Next() {
+		repository, err := scanRepository(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan repository: %w", err)
+		}
+		repositories = append(repositories, repository)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate repositories: %w", err)
+	}
+	return repositories, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

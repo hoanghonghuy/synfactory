@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hoanghonghuy/synfactory/internal/config"
+	githubfactory "github.com/hoanghonghuy/synfactory/internal/github"
 	"github.com/hoanghonghuy/synfactory/internal/postgres"
 )
 
@@ -48,14 +50,52 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	wakeEvents := make(chan struct{}, 1)
+	wake := func() {
+		select {
+		case wakeEvents <- struct{}{}:
+		default:
+		}
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "unknown-host"
+	}
+	eventProcessor := githubfactory.NewEventProcessor(
+		store,
+		"event-router@"+hostname,
+		cfg.EventPollInterval,
+		cfg.EventLeaseDuration,
+		cfg.EventMaxAttempts,
+		wakeEvents,
+	)
+	go runComponent(ctx, "event processor", eventProcessor.Run)
+
+	if cfg.GitHubToken != "" {
+		githubClient := githubfactory.NewClient(cfg.GitHubAPIURL, cfg.GitHubToken, nil)
+		reconciler := githubfactory.NewReconciler(githubClient, store, cfg.ReconcileInterval, wake)
+		go runComponent(ctx, "github reconciler", reconciler.Run)
+	} else {
+		slog.Warn("github reconciliation disabled because SYNFACTORY_GITHUB_TOKEN is empty")
+	}
+
+	go runComponent(ctx, "lease recovery", func(ctx context.Context) error {
+		return runLeaseRecovery(ctx, store, cfg.LeaseRecoveryInterval)
+	})
+
 	mux := http.NewServeMux()
+	mux.Handle("/webhooks/github", githubfactory.NewWebhookHandler(cfg.GitHubWebhookSecret, store, wake))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, healthResponse{Status: "ok"})
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		checkCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
-		if err := store.Ping(ctx); err != nil {
+		if err := store.Ping(checkCtx); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, healthResponse{Status: "not_ready"})
 			return
 		}
@@ -66,10 +106,10 @@ func main() {
 		Addr:              cfg.Addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		slog.Info("synfactory api listening", "addr", cfg.Addr)
@@ -85,6 +125,44 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("api shutdown failed", "error", err)
+	}
+}
+
+type leaseRecoveryStore interface {
+	RecoverExpiredLeases(ctx context.Context, now time.Time) (int64, error)
+}
+
+func runLeaseRecovery(ctx context.Context, store leaseRecoveryStore, interval time.Duration) error {
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	for {
+		recovered, err := store.RecoverExpiredLeases(ctx, time.Now().UTC())
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return ctx.Err()
+			}
+			slog.Error("lease recovery failed", "error", err)
+		} else if recovered > 0 {
+			slog.Warn("recovered expired job leases", "count", recovered)
+		}
+
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func runComponent(ctx context.Context, name string, run func(context.Context) error) {
+	err := run(ctx)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		slog.Error(fmt.Sprintf("%s stopped", name), "error", err)
 	}
 }
 

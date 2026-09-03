@@ -8,12 +8,13 @@ import (
 type Role string
 
 const (
-	RolePM       Role = "pm"
-	RoleTeamLead Role = "team_lead"
-	RoleDev      Role = "developer"
-	RoleReviewer Role = "reviewer"
-	RoleQA       Role = "qa"
-	RoleRelease  Role = "release"
+	RolePM         Role = "pm"
+	RoleTeamLead   Role = "team_lead"
+	RoleDev        Role = "developer"
+	RoleReviewer   Role = "reviewer"
+	RoleQA         Role = "qa"
+	RoleCIGuardian Role = "ci_guardian"
+	RoleRelease    Role = "release"
 )
 
 type JobStatus string

@@ -19,18 +19,22 @@ type Repository struct {
 }
 
 type InboxEvent struct {
-	ID           int64
-	DedupeKey    string
-	Provider     string
-	RepositoryID string
-	Kind         string
-	Subject      string
-	Revision     string
-	DeliveryID   string
-	Payload      json.RawMessage
-	ReceivedAt   time.Time
-	ProcessedAt  *time.Time
-	ProcessError string
+	ID              int64
+	DedupeKey       string
+	Provider        string
+	RepositoryID    string
+	Kind            string
+	Subject         string
+	Revision        string
+	DeliveryID      string
+	Payload         json.RawMessage
+	ReceivedAt      time.Time
+	ProcessedAt     *time.Time
+	ProcessError    string
+	ProcessingOwner string
+	ProcessingUntil *time.Time
+	ProcessAttempt  int
+	NextAttemptAt   time.Time
 }
 
 type NewJob struct {

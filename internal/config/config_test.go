@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestLoadRequiresDatabaseURL(t *testing.T) {
@@ -24,5 +25,14 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.DBMaxOpenConns != 20 || cfg.DBMaxIdleConns != 5 {
 		t.Fatalf("unexpected pool defaults: %+v", cfg)
+	}
+	if cfg.ReconcileInterval != time.Hour || cfg.EventPollInterval != 5*time.Second || cfg.LeaseRecoveryInterval != 30*time.Second {
+		t.Fatalf("unexpected scheduler defaults: %+v", cfg)
+	}
+	if cfg.EventLeaseDuration != 30*time.Second || cfg.EventMaxAttempts != 5 {
+		t.Fatalf("unexpected event processor defaults: %+v", cfg)
+	}
+	if cfg.GitHubAPIURL != "https://api.github.com" {
+		t.Fatalf("unexpected github API URL: %s", cfg.GitHubAPIURL)
 	}
 }

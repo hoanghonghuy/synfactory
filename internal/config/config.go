@@ -10,22 +10,38 @@ import (
 var ErrDatabaseURLRequired = errors.New("SYNFACTORY_DATABASE_URL is required")
 
 type Config struct {
-	Addr              string
-	DatabaseURL       string
-	DBMaxOpenConns    int
-	DBMaxIdleConns    int
-	DBConnMaxIdle     time.Duration
-	DBConnMaxLifetime time.Duration
+	Addr                  string
+	DatabaseURL           string
+	DBMaxOpenConns        int
+	DBMaxIdleConns        int
+	DBConnMaxIdle         time.Duration
+	DBConnMaxLifetime     time.Duration
+	GitHubAPIURL          string
+	GitHubToken           string
+	GitHubWebhookSecret   string
+	ReconcileInterval     time.Duration
+	EventPollInterval     time.Duration
+	EventLeaseDuration    time.Duration
+	EventMaxAttempts      int
+	LeaseRecoveryInterval time.Duration
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:              envString("SYNFACTORY_ADDR", ":8080"),
-		DatabaseURL:       os.Getenv("SYNFACTORY_DATABASE_URL"),
-		DBMaxOpenConns:    envInt("SYNFACTORY_DB_MAX_OPEN_CONNS", 20),
-		DBMaxIdleConns:    envInt("SYNFACTORY_DB_MAX_IDLE_CONNS", 5),
-		DBConnMaxIdle:     envDuration("SYNFACTORY_DB_CONN_MAX_IDLE", 5*time.Minute),
-		DBConnMaxLifetime: envDuration("SYNFACTORY_DB_CONN_MAX_LIFETIME", 30*time.Minute),
+		Addr:                  envString("SYNFACTORY_ADDR", ":8080"),
+		DatabaseURL:           os.Getenv("SYNFACTORY_DATABASE_URL"),
+		DBMaxOpenConns:        envInt("SYNFACTORY_DB_MAX_OPEN_CONNS", 20),
+		DBMaxIdleConns:        envInt("SYNFACTORY_DB_MAX_IDLE_CONNS", 5),
+		DBConnMaxIdle:         envDuration("SYNFACTORY_DB_CONN_MAX_IDLE", 5*time.Minute),
+		DBConnMaxLifetime:     envDuration("SYNFACTORY_DB_CONN_MAX_LIFETIME", 30*time.Minute),
+		GitHubAPIURL:          envString("SYNFACTORY_GITHUB_API_URL", "https://api.github.com"),
+		GitHubToken:           os.Getenv("SYNFACTORY_GITHUB_TOKEN"),
+		GitHubWebhookSecret:   os.Getenv("SYNFACTORY_GITHUB_WEBHOOK_SECRET"),
+		ReconcileInterval:     envDuration("SYNFACTORY_RECONCILE_INTERVAL", time.Hour),
+		EventPollInterval:     envDuration("SYNFACTORY_EVENT_POLL_INTERVAL", 5*time.Second),
+		EventLeaseDuration:    envDuration("SYNFACTORY_EVENT_LEASE_DURATION", 30*time.Second),
+		EventMaxAttempts:      envIntPositive("SYNFACTORY_EVENT_MAX_ATTEMPTS", 5),
+		LeaseRecoveryInterval: envDuration("SYNFACTORY_LEASE_RECOVERY_INTERVAL", 30*time.Second),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, ErrDatabaseURLRequired
@@ -47,6 +63,18 @@ func envInt(key string, fallback int) int {
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envIntPositive(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
 		return fallback
 	}
 	return parsed
