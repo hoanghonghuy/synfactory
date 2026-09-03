@@ -20,8 +20,8 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Addr != ":8080" {
-		t.Fatalf("unexpected addr: %s", cfg.Addr)
+	if cfg.Addr != ":8080" || cfg.Mode != "all" {
+		t.Fatalf("unexpected process defaults: %+v", cfg)
 	}
 	if cfg.DBMaxOpenConns != 20 || cfg.DBMaxIdleConns != 5 {
 		t.Fatalf("unexpected pool defaults: %+v", cfg)
@@ -34,5 +34,14 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.GitHubAPIURL != "https://api.github.com" {
 		t.Fatalf("unexpected github API URL: %s", cfg.GitHubAPIURL)
+	}
+	if cfg.RepositoryRoot != "/var/lib/synfactory/repos" || cfg.WorkspaceRoot != "/var/lib/synfactory/workspaces" {
+		t.Fatalf("unexpected worker storage defaults: %+v", cfg)
+	}
+	if cfg.RuntimeConfigPath != "/etc/synfactory/runtimes.json" || cfg.WorkerCapacity != 1 {
+		t.Fatalf("unexpected runtime defaults: %+v", cfg)
+	}
+	if cfg.WorkerLeaseDuration != 2*time.Minute || cfg.WorkerHeartbeat != 30*time.Second || cfg.WorkerStaleAfter != 2*time.Minute {
+		t.Fatalf("unexpected worker timing defaults: %+v", cfg)
 	}
 }
