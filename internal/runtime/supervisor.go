@@ -25,6 +25,7 @@ type CommandSpec struct {
 	Stdin       string
 	Secrets     []string
 	Timeout     time.Duration
+	Sandbox     SandboxSpec
 }
 
 type ProcessResult struct {
@@ -46,12 +47,7 @@ type Supervisor struct {
 }
 
 func NewSupervisor() *Supervisor {
-	return &Supervisor{
-		active:      make(map[string]*exec.Cmd),
-		outputLimit: defaultOutputLimit,
-		gracePeriod: 2 * time.Second,
-		now:         func() time.Time { return time.Now().UTC() },
-	}
+	return &Supervisor{active: make(map[string]*exec.Cmd), outputLimit: defaultOutputLimit, gracePeriod: 2 * time.Second, now: func() time.Time { return time.Now().UTC() }}
 }
 
 func (s *Supervisor) Run(ctx context.Context, spec CommandSpec) (ProcessResult, error) {
@@ -67,6 +63,11 @@ func (s *Supervisor) Run(ctx context.Context, spec CommandSpec) (ProcessResult, 
 	if s == nil {
 		s = NewSupervisor()
 	}
+	prepared, err := prepareCommandSpec(spec)
+	if err != nil {
+		return ProcessResult{}, Failure(FailurePermanent, err)
+	}
+	spec = prepared
 
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
@@ -97,15 +98,10 @@ func (s *Supervisor) Run(ctx context.Context, spec CommandSpec) (ProcessResult, 
 	}
 	s.active[spec.ExecutionID] = cmd
 	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.active, spec.ExecutionID)
-		s.mu.Unlock()
-	}()
+	defer func() { s.mu.Lock(); delete(s.active, spec.ExecutionID); s.mu.Unlock() }()
 
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
-
 	var waitErr error
 	var timedOut, canceled bool
 	select {
@@ -122,19 +118,10 @@ func (s *Supervisor) Run(ctx context.Context, spec CommandSpec) (ProcessResult, 
 		}
 	}
 
-	result := ProcessResult{
-		ExitCode:   exitCode(waitErr),
-		Stdout:     stdout.String(),
-		Stderr:     stderr.String(),
-		StartedAt:  started,
-		FinishedAt: s.now(),
-		TimedOut:   timedOut,
-		Canceled:   canceled,
-	}
+	result := ProcessResult{ExitCode: exitCode(waitErr), Stdout: stdout.String(), Stderr: stderr.String(), StartedAt: started, FinishedAt: s.now(), TimedOut: timedOut, Canceled: canceled}
 	redactor := NewRedactor(spec.Secrets...)
 	result.Stdout = redactor.String(result.Stdout)
 	result.Stderr = redactor.String(result.Stderr)
-
 	if timedOut {
 		return result, Failure(FailureTimeout, ErrRunTimedOut)
 	}
@@ -187,18 +174,9 @@ func exitCode(err error) int {
 func classifyProcessError(err error, diagnostics string) error {
 	lower := strings.ToLower(diagnostics)
 	switch {
-	case strings.Contains(lower, "authentication required"),
-		strings.Contains(lower, "not authenticated"),
-		strings.Contains(lower, "unauthorized"),
-		strings.Contains(lower, "invalid api key"),
-		strings.Contains(lower, "command not found"):
+	case strings.Contains(lower, "authentication required"), strings.Contains(lower, "not authenticated"), strings.Contains(lower, "unauthorized"), strings.Contains(lower, "invalid api key"), strings.Contains(lower, "command not found"):
 		return Failure(FailureUnavailable, err)
-	case strings.Contains(lower, "rate limit"),
-		strings.Contains(lower, "too many requests"),
-		strings.Contains(lower, "temporarily unavailable"),
-		strings.Contains(lower, "connection reset"),
-		strings.Contains(lower, "connection refused"),
-		strings.Contains(lower, "timeout"):
+	case strings.Contains(lower, "rate limit"), strings.Contains(lower, "too many requests"), strings.Contains(lower, "temporarily unavailable"), strings.Contains(lower, "connection reset"), strings.Contains(lower, "connection refused"), strings.Contains(lower, "timeout"):
 		return Failure(FailureTransient, err)
 	default:
 		return Failure(FailurePermanent, err)
@@ -234,31 +212,17 @@ func mergeEnv(base []string, overrides map[string]string) []string {
 	return result
 }
 
-type limitedBuffer struct {
-	buf       bytes.Buffer
-	limit     int64
-	truncated bool
-}
-
+type limitedBuffer struct { buf bytes.Buffer; limit int64; truncated bool }
 func (b *limitedBuffer) Write(p []byte) (int, error) {
 	original := len(p)
 	remaining := b.limit - int64(b.buf.Len())
-	if remaining <= 0 {
-		b.truncated = true
-		return original, nil
-	}
-	if int64(len(p)) > remaining {
-		p = p[:remaining]
-		b.truncated = true
-	}
+	if remaining <= 0 { b.truncated = true; return original, nil }
+	if int64(len(p)) > remaining { p = p[:remaining]; b.truncated = true }
 	_, _ = b.buf.Write(p)
 	return original, nil
 }
-
 func (b *limitedBuffer) String() string {
-	if !b.truncated {
-		return b.buf.String()
-	}
+	if !b.truncated { return b.buf.String() }
 	var out strings.Builder
 	_, _ = io.Copy(&out, bytes.NewReader(b.buf.Bytes()))
 	out.WriteString("\n[output truncated]\n")
