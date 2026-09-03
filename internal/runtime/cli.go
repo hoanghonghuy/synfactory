@@ -11,7 +11,6 @@ import (
 )
 
 type commandBuilder func(request Request, sessionID string) CommandSpec
-
 type outputParser func(process ProcessResult, runtimeName, model string) (Result, error)
 
 type CLIAdapter struct {
@@ -31,14 +30,9 @@ func newCLIAdapter(name, binary string, supervisor *Supervisor, probeLimit time.
 	if probeLimit <= 0 {
 		probeLimit = 5 * time.Second
 	}
-	return &CLIAdapter{
-		name: name, binary: binary, probeArgs: append([]string(nil), probeArgs...),
-		probeLimit: probeLimit, supervisor: supervisor, build: build, parse: parse,
-	}
+	return &CLIAdapter{name: name, binary: binary, probeArgs: append([]string(nil), probeArgs...), probeLimit: probeLimit, supervisor: supervisor, build: build, parse: parse}
 }
-
 func (a *CLIAdapter) Name() string { return a.name }
-
 func (a *CLIAdapter) Probe(ctx context.Context) error {
 	if _, err := exec.LookPath(a.binary); err != nil {
 		return Failure(FailureUnavailable, fmt.Errorf("%w: %s: %v", ErrRuntimeUnavailable, a.binary, err))
@@ -57,28 +51,25 @@ func (a *CLIAdapter) Probe(ctx context.Context) error {
 	}
 	return nil
 }
-
 func (a *CLIAdapter) Run(ctx context.Context, request Request) (Result, error) {
 	return a.execute(ctx, "", request)
 }
-
 func (a *CLIAdapter) Resume(ctx context.Context, sessionID string, request Request) (Result, error) {
 	if sessionID == "" {
 		return Result{}, Failure(FailurePermanent, errors.New("session id is required for resume"))
 	}
 	return a.execute(ctx, sessionID, request)
 }
-
 func (a *CLIAdapter) Cancel(_ context.Context, runID string) error {
 	return a.supervisor.Cancel(a.executionID(runID))
 }
-
 func (a *CLIAdapter) execute(ctx context.Context, sessionID string, request Request) (Result, error) {
 	if request.RunID == "" {
 		return Result{}, Failure(FailurePermanent, errors.New("run id is required"))
 	}
 	spec := a.build(request, sessionID)
 	spec.ExecutionID = a.executionID(request.RunID)
+	spec.Sandbox = request.Sandbox
 	process, err := a.supervisor.Run(ctx, spec)
 	result, parseErr := a.parse(process, a.name, request.Model)
 	if result.Runtime == "" {
@@ -103,11 +94,7 @@ func (a *CLIAdapter) execute(ctx context.Context, sessionID string, request Requ
 	}
 	return result, nil
 }
-
-func (a *CLIAdapter) executionID(runID string) string {
-	return runID + ":" + a.name
-}
-
+func (a *CLIAdapter) executionID(runID string) string { return runID + ":" + a.name }
 func outcomeForFailure(class FailureClass) Outcome {
 	switch class {
 	case FailureUnavailable:
@@ -120,13 +107,8 @@ func outcomeForFailure(class FailureClass) Outcome {
 		return OutcomeFailed
 	}
 }
-
 func parseGenericJSON(process ProcessResult, runtimeName, model string) (Result, error) {
-	result := Result{
-		Runtime: runtimeName, Model: model, ExitCode: process.ExitCode,
-		Output: process.Stdout, Diagnostics: process.Stderr,
-		StartedAt: process.StartedAt, FinishedAt: process.FinishedAt,
-	}
+	result := Result{Runtime: runtimeName, Model: model, ExitCode: process.ExitCode, Output: process.Stdout, Diagnostics: process.Stderr, StartedAt: process.StartedAt, FinishedAt: process.FinishedAt}
 	objects, err := decodeJSONObjects(process.Stdout)
 	if err != nil {
 		if strings.TrimSpace(process.Stdout) != "" {
@@ -154,7 +136,6 @@ func parseGenericJSON(process ProcessResult, runtimeName, model string) (Result,
 	}
 	return result, nil
 }
-
 func decodeJSONObjects(output string) ([]map[string]any, error) {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
@@ -181,7 +162,6 @@ func decodeJSONObjects(output string) ([]map[string]any, error) {
 	}
 	return objects, nil
 }
-
 func normalizeJSONEvent(object map[string]any) Event {
 	kind := findString(object, "event", "type", "kind")
 	if kind == "" {
@@ -190,7 +170,6 @@ func normalizeJSONEvent(object map[string]any) Event {
 	message := findString(object, "message", "text", "response", "result")
 	return Event{Kind: kind, Message: message, Data: object}
 }
-
 func findString(value any, keys ...string) string {
 	keySet := make(map[string]bool, len(keys))
 	for _, key := range keys {
@@ -202,11 +181,8 @@ func findString(value any, keys ...string) string {
 		case map[string]any:
 			for _, key := range keys {
 				if raw, ok := typed[key]; ok {
-					switch v := raw.(type) {
-					case string:
-						if strings.TrimSpace(v) != "" {
-							return v
-						}
+					if v, ok := raw.(string); ok && strings.TrimSpace(v) != "" {
+						return v
 					}
 				}
 			}

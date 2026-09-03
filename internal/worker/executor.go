@@ -8,11 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/hoanghonghuy/synfactory/internal/domain"
 	"github.com/hoanghonghuy/synfactory/internal/postgres"
 	runtimefactory "github.com/hoanghonghuy/synfactory/internal/runtime"
+	"github.com/hoanghonghuy/synfactory/internal/verifier"
+	"github.com/hoanghonghuy/synfactory/internal/workspace"
 )
 
 type Store interface {
@@ -36,6 +39,10 @@ type RequestBuilder interface {
 	Build(ctx context.Context, job domain.Job, repository postgres.Repository) (runtimefactory.Request, error)
 }
 
+type VerificationPlanner interface {
+	Plan(ctx context.Context, job domain.Job, repository postgres.Repository, request runtimefactory.Request) (verifier.Plan, error)
+}
+
 type Config struct {
 	ID                string
 	Host              string
@@ -48,11 +55,14 @@ type Config struct {
 }
 
 type Worker struct {
-	store   Store
-	engine  RuntimeEngine
-	builder RequestBuilder
-	cfg     Config
-	now     func() time.Time
+	store      Store
+	engine     RuntimeEngine
+	builder    RequestBuilder
+	workspaces workspace.Manager
+	verifier   *verifier.Verifier
+	planner    VerificationPlanner
+	cfg        Config
+	now        func() time.Time
 }
 
 func New(store Store, engine RuntimeEngine, builder RequestBuilder, cfg Config) *Worker {
@@ -78,6 +88,13 @@ func New(store Store, engine RuntimeEngine, builder RequestBuilder, cfg Config) 
 		cfg.RetryBase = 30 * time.Second
 	}
 	return &Worker{store: store, engine: engine, builder: builder, cfg: cfg, now: func() time.Time { return time.Now().UTC() }}
+}
+
+func (w *Worker) WithExecution(workspaces workspace.Manager, verification *verifier.Verifier, planner VerificationPlanner) *Worker {
+	w.workspaces = workspaces
+	w.verifier = verification
+	w.planner = planner
+	return w
 }
 
 func (w *Worker) Run(ctx context.Context) error {
@@ -136,15 +153,30 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 		request.Metadata = map[string]string{}
 	}
 	request.Metadata["job_id"] = job.ID
-	request.Metadata["job_attempt"] = fmt.Sprintf("%d", job.Attempt)
+	request.Metadata["job_attempt"] = strconv.Itoa(job.Attempt)
+	request.Metadata["job_revision"] = job.Revision
+
+	var handle workspace.Handle
+	if w.workspaces != nil {
+		handle, err = w.workspaces.Acquire(ctx, workspace.Spec{
+			ID: job.ID + "-" + strconv.Itoa(job.Attempt), SourcePath: request.Workspace,
+			Revision: job.Revision, Branch: request.Metadata["task_branch"],
+			Mode: workspaceMode(request.Metadata["workspace_mode"]), Access: workspace.AccessForPermissions(request.Permissions),
+			ContainerImage: request.Metadata["container_image"], NetworkAllowed: request.Metadata["network_allowed"] == "true",
+			Memory: request.Metadata["container_memory"], CPUs: request.Metadata["container_cpus"],
+		})
+		if err != nil {
+			return true, w.failJob(ctx, job, fmt.Errorf("acquire workspace: %w", err))
+		}
+		request.Workspace = handle.Path
+		request.Sandbox = handle.Sandbox
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	leaseErr := make(chan error, 1)
 	go w.keepLease(runCtx, job.ID, cancel, leaseErr)
-
 	observer := &runObserver{store: w.store, job: job, now: w.now}
-	result, _, runErr := w.engine.Execute(runCtx, request, observer)
+	result, attempts, runErr := w.engine.Execute(runCtx, request, observer)
 	cancel()
 	select {
 	case err := <-leaseErr:
@@ -154,7 +186,40 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	default:
 	}
 	if ctx.Err() != nil {
+		if handle.Path != "" {
+			_ = w.workspaces.Release(context.Background(), handle)
+		}
 		return true, ctx.Err()
+	}
+
+	if handle.Path != "" {
+		if err := w.workspaces.Validate(ctx, handle); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+	}
+	if runErr == nil && result.Outcome == runtimefactory.OutcomeSucceeded && w.verifier != nil && w.planner != nil {
+		plan, planErr := w.planner.Plan(ctx, job, repository, request)
+		if planErr != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("build verification plan: %w", planErr))
+		} else {
+			report, verifyErr := w.verifier.Verify(ctx, handle, plan)
+			if len(attempts) > 0 {
+				metadata, _ := json.Marshal(report)
+				last := attempts[len(attempts)-1]
+				_, evidenceErr := w.store.AddEvidence(ctx, postgres.Evidence{RunID: runID(job.ID, job.Attempt, last.Sequence), Kind: "verification", Name: "deterministic-verification", SHA256: report.SHA256, Metadata: metadata})
+				if evidenceErr != nil {
+					runErr = errors.Join(runErr, fmt.Errorf("persist verification evidence: %w", evidenceErr))
+				}
+			}
+			if verifyErr != nil {
+				runErr = errors.Join(runErr, verifyErr)
+			}
+		}
+	}
+	if handle.Path != "" {
+		if err := w.workspaces.Release(ctx, handle); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("release workspace: %w", err))
+		}
 	}
 	if runErr == nil && result.Outcome == runtimefactory.OutcomeSucceeded {
 		if _, err := w.store.SucceedJob(ctx, job.ID, w.cfg.ID, w.now()); err != nil {
@@ -166,6 +231,13 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 		runErr = fmt.Errorf("runtime ended with outcome %s", result.Outcome)
 	}
 	return true, w.failJob(ctx, job, runErr)
+}
+
+func workspaceMode(value string) workspace.Mode {
+	if workspace.Mode(value) == workspace.ModeDocker {
+		return workspace.ModeDocker
+	}
+	return workspace.ModeWorktree
 }
 
 func (w *Worker) keepLease(ctx context.Context, jobID string, cancel context.CancelFunc, result chan<- error) {
@@ -191,7 +263,6 @@ func (w *Worker) keepLease(ctx context.Context, jobID string, cancel context.Can
 		}
 	}
 }
-
 func (w *Worker) failJob(ctx context.Context, job domain.Job, runErr error) error {
 	now := w.now()
 	retryAt := now.Add(retryDelay(w.cfg.RetryBase, job.Attempt))
@@ -201,7 +272,6 @@ func (w *Worker) failJob(ctx context.Context, job domain.Job, runErr error) erro
 	}
 	return runErr
 }
-
 func (w *Worker) heartbeatLoop(ctx context.Context) {
 	worker := postgres.Worker{ID: w.cfg.ID, Host: w.cfg.Host, Capacity: w.cfg.Capacity}
 	for {
@@ -219,7 +289,6 @@ func (w *Worker) heartbeatLoop(ctx context.Context) {
 		}
 	}
 }
-
 func retryDelay(base time.Duration, attempt int) time.Duration {
 	if base <= 0 {
 		base = 30 * time.Second
@@ -242,14 +311,9 @@ type runObserver struct {
 
 func (o *runObserver) AttemptStarted(ctx context.Context, attempt runtimefactory.Attempt) error {
 	metadata, _ := json.Marshal(map[string]any{"failure_class": attempt.FailureClass})
-	_, err := o.store.CreateRun(ctx, postgres.Run{
-		ID: runID(o.job.ID, o.job.Attempt, attempt.Sequence), JobID: o.job.ID,
-		Attempt: o.job.Attempt, Sequence: attempt.Sequence, Runtime: attempt.Runtime,
-		Model: attempt.Model, Status: "running", Metadata: metadata,
-	})
+	_, err := o.store.CreateRun(ctx, postgres.Run{ID: runID(o.job.ID, o.job.Attempt, attempt.Sequence), JobID: o.job.ID, Attempt: o.job.Attempt, Sequence: attempt.Sequence, Runtime: attempt.Runtime, Model: attempt.Model, Status: "running", Metadata: metadata})
 	return err
 }
-
 func (o *runObserver) AttemptFinished(ctx context.Context, attempt runtimefactory.Attempt) error {
 	status := runStatus(attempt.Result.Outcome, attempt.Err)
 	exitCode := attempt.Result.ExitCode
@@ -261,19 +325,10 @@ func (o *runObserver) AttemptFinished(ctx context.Context, attempt runtimefactor
 	if _, err := o.store.FinishRun(ctx, runID, status, o.now(), &exitCode, summary, attempt.Result.SessionID); err != nil {
 		return err
 	}
-	evidenceMetadata, _ := json.Marshal(map[string]any{
-		"outcome":       attempt.Result.Outcome,
-		"failure_class": attempt.FailureClass,
-		"output":        attempt.Result.Output,
-		"diagnostics":   attempt.Result.Diagnostics,
-		"events":        attempt.Result.Events,
-	})
-	_, err := o.store.AddEvidence(ctx, postgres.Evidence{
-		RunID: runID, Kind: "runtime", Name: "normalized-runtime-output", Metadata: evidenceMetadata,
-	})
+	evidenceMetadata, _ := json.Marshal(map[string]any{"outcome": attempt.Result.Outcome, "failure_class": attempt.FailureClass, "output": attempt.Result.Output, "diagnostics": attempt.Result.Diagnostics, "events": attempt.Result.Events})
+	_, err := o.store.AddEvidence(ctx, postgres.Evidence{RunID: runID, Kind: "runtime", Name: "normalized-runtime-output", Metadata: evidenceMetadata})
 	return err
 }
-
 func runStatus(outcome runtimefactory.Outcome, err error) string {
 	if err != nil {
 		switch runtimefactory.ClassifyFailure(err) {
@@ -290,7 +345,6 @@ func runStatus(outcome runtimefactory.Outcome, err error) string {
 	}
 	return "failed"
 }
-
 func runID(jobID string, attempt, sequence int) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d", jobID, attempt, sequence)))
 	return "run_" + hex.EncodeToString(sum[:12])

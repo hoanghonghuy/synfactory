@@ -49,6 +49,23 @@ type Event struct {
 	Data    map[string]any `json:"data,omitempty"`
 }
 
+type SandboxMode string
+
+const (
+	SandboxHost   SandboxMode = "host"
+	SandboxDocker SandboxMode = "docker"
+)
+
+type SandboxSpec struct {
+	Mode           SandboxMode
+	Image          string
+	ReadOnly       bool
+	NetworkAllowed bool
+	Memory         string
+	CPUs           string
+	ContainerPath  string
+}
+
 type Request struct {
 	RunID       string
 	Repository  string
@@ -59,6 +76,7 @@ type Request struct {
 	Permissions []Permission
 	Timeout     time.Duration
 	Metadata    map[string]string
+	Sandbox     SandboxSpec
 }
 
 type Result struct {
