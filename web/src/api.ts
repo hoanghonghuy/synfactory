@@ -1,5 +1,35 @@
 import type { Evidence, Job, Overview, Page, Repository, Run, Worker, Workflow, WorkflowDetail } from './types'
 
+type WorkflowActionWire = {
+  id: string
+  kind: string
+  role: string
+  mode: string
+  target_state: string
+  revision: string
+  budget_kind?: string
+  status: string
+  job_id?: string
+  decision?: string
+  created_at: string
+  completed_at?: string
+}
+
+type WorkflowHistoryWire = {
+  id: number
+  from_state: string
+  to_state: string
+  actor_role: string
+  reason?: string
+  created_at: string
+}
+
+type WorkflowDetailWire = {
+  workflow: Workflow
+  actions: WorkflowActionWire[] | null
+  history: WorkflowHistoryWire[] | null
+}
+
 export class OperatorApiError extends Error {
   constructor(
     readonly status: number,
@@ -50,8 +80,33 @@ export class OperatorApi {
     return this.get(`/api/v1/workflows?limit=${limit}`)
   }
 
-  workflow(id: string): Promise<WorkflowDetail> {
-    return this.get(`/api/v1/workflows/${encodeURIComponent(id)}`)
+  async workflow(id: string): Promise<WorkflowDetail> {
+    const wire = await this.get<WorkflowDetailWire>(`/api/v1/workflows/${encodeURIComponent(id)}`)
+    return {
+      workflow: wire.workflow,
+      actions: wire.actions?.map((item) => ({
+        ID: item.id,
+        Kind: item.kind,
+        Role: item.role,
+        Mode: item.mode,
+        TargetState: item.target_state,
+        Revision: item.revision,
+        BudgetKind: item.budget_kind ?? '',
+        Status: item.status,
+        JobID: item.job_id ?? '',
+        Decision: item.decision ?? '',
+        CreatedAt: item.created_at,
+        CompletedAt: item.completed_at,
+      })) ?? null,
+      history: wire.history?.map((item) => ({
+        ID: item.id,
+        FromState: item.from_state,
+        ToState: item.to_state,
+        ActorRole: item.actor_role,
+        Reason: item.reason ?? '',
+        CreatedAt: item.created_at,
+      })) ?? null,
+    }
   }
 
   runs(limit = 100): Promise<Page<Run>> {
