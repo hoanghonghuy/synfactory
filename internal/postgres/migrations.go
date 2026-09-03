@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -15,8 +16,26 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )`
 
+// migrationLockKey is stable for every SynFactory process sharing one database.
+// A session-level advisory lock serializes startup migrations across API,
+// scheduler, and worker processes without coupling service startup order.
+const migrationLockKey int64 = 0x53594E46414354
+
 func (s *Store) ApplyMigrations(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, ensureMigrationsTableSQL); err != nil {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrationLockKey); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationLockKey)
+	}()
+
+	if _, err := conn.ExecContext(ctx, ensureMigrationsTableSQL); err != nil {
 		return fmt.Errorf("ensure schema_migrations: %w", err)
 	}
 
@@ -27,7 +46,7 @@ func (s *Store) ApplyMigrations(ctx context.Context) error {
 	sort.Strings(names)
 
 	for _, name := range names {
-		applied, err := s.migrationApplied(ctx, name)
+		applied, err := migrationApplied(ctx, conn, name)
 		if err != nil {
 			return err
 		}
@@ -40,7 +59,7 @@ func (s *Store) ApplyMigrations(ctx context.Context) error {
 			return fmt.Errorf("read migration %s: %w", name, err)
 		}
 
-		tx, err := s.db.BeginTx(ctx, nil)
+		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin migration %s: %w", name, err)
 		}
@@ -60,9 +79,13 @@ func (s *Store) ApplyMigrations(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) migrationApplied(ctx context.Context, name string) (bool, error) {
+type migrationQueryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func migrationApplied(ctx context.Context, queryer migrationQueryer, name string) (bool, error) {
 	var applied bool
-	err := s.db.QueryRowContext(ctx,
+	err := queryer.QueryRowContext(ctx,
 		`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, name,
 	).Scan(&applied)
 	if err != nil {
