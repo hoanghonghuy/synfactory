@@ -22,7 +22,6 @@ ON CONFLICT (provider, full_name) DO UPDATE SET
     default_branch = EXCLUDED.default_branch,
     enabled = EXCLUDED.enabled,
     config = EXCLUDED.config,
-    config_version = repositories.config_version + 1,
     updated_at = NOW()
 RETURNING id, provider, full_name, default_branch, enabled, config, config_version, created_at, updated_at`,
 		repository.ID,
@@ -104,23 +103,19 @@ func (s *Store) MutateRepository(ctx context.Context, repository Repository, act
 	defer tx.Rollback()
 
 	var previous json.RawMessage
-	var oldVersion int64
-	err = tx.QueryRowContext(ctx, `SELECT config, config_version FROM repositories WHERE id = $1 FOR UPDATE`, repository.ID).Scan(&previous, &oldVersion)
+	err = tx.QueryRowContext(ctx, `SELECT config FROM repositories WHERE provider = $1 AND full_name = $2 FOR UPDATE`, repository.Provider, repository.FullName).Scan(&previous)
 	if err != nil && err != sql.ErrNoRows {
 		return Repository{}, fmt.Errorf("lock repository: %w", err)
 	}
 	if err == sql.ErrNoRows {
 		previous = json.RawMessage(`{}`)
-		oldVersion = 0
 	}
 
 	var saved Repository
 	err = tx.QueryRowContext(ctx, `
 INSERT INTO repositories (id, provider, full_name, default_branch, enabled, config, config_version)
 VALUES ($1, $2, $3, $4, $5, $6, 1)
-ON CONFLICT (id) DO UPDATE SET
-    provider = EXCLUDED.provider,
-    full_name = EXCLUDED.full_name,
+ON CONFLICT (provider, full_name) DO UPDATE SET
     default_branch = EXCLUDED.default_branch,
     enabled = EXCLUDED.enabled,
     config = EXCLUDED.config,
@@ -142,7 +137,6 @@ VALUES ($1, $2, $3, $4, $5, $6)`, saved.ID, saved.ConfigVersion, action, actor, 
 	if err := tx.Commit(); err != nil {
 		return Repository{}, fmt.Errorf("commit repository mutation: %w", err)
 	}
-	_ = oldVersion
 	return saved, nil
 }
 
