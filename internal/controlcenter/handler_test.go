@@ -53,7 +53,7 @@ func (testStore) GetRun(context.Context, string) (postgres.Run, error) {
 	return postgres.Run{}, postgres.ErrNotFound
 }
 func (testStore) ListEvidence(context.Context, string) ([]postgres.Evidence, error) { return nil, nil }
-func (testStore) ListWorkers(context.Context) ([]postgres.Worker, error)             { return nil, nil }
+func (testStore) ListWorkers(context.Context) ([]postgres.Worker, error) { return nil, nil }
 
 func TestOperatorAPIDisabledWithoutToken(t *testing.T) {
 	mux := http.NewServeMux()
@@ -82,7 +82,7 @@ func TestRepositoryResponseDoesNotExposeRepositoryConfig(t *testing.T) {
 	mux := http.NewServeMux()
 	store := testStore{repositories: []postgres.Repository{{
 		ID: "github:1", Provider: "github", FullName: "owner/repo", DefaultBranch: "develop", Enabled: true,
-		Config: json.RawMessage(`{"clone_url":"https://secret.invalid/repo","api_key":"must-not-leak"}`),
+		Config:    json.RawMessage(`{"clone_url":"https://secret.invalid/repo","api_key":"must-not-leak"}`),
 		UpdatedAt: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC),
 	}}}
 	Handler{Store: store, Token: "operator-secret"}.Register(mux)
