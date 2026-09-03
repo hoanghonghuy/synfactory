@@ -13,8 +13,11 @@ import (
 	"time"
 
 	"github.com/hoanghonghuy/synfactory/internal/config"
+	"github.com/hoanghonghuy/synfactory/internal/domain"
 	githubfactory "github.com/hoanghonghuy/synfactory/internal/github"
+	"github.com/hoanghonghuy/synfactory/internal/orchestrator"
 	"github.com/hoanghonghuy/synfactory/internal/postgres"
+	"github.com/hoanghonghuy/synfactory/internal/workflow"
 )
 
 type healthResponse struct {
@@ -54,19 +57,25 @@ func main() {
 	defer stop()
 
 	wakeEvents := make(chan struct{}, 1)
-	wake := func() {
-		select {
-		case wakeEvents <- struct{}{}:
-		default:
-		}
+	wakeWorkflows := make(chan struct{}, 1)
+	wakeEventProcessor := func() { signalChannel(wakeEvents) }
+	wakeWorkflowCoordinator := func() { signalChannel(wakeWorkflows) }
+	wakeAll := func() {
+		wakeEventProcessor()
+		wakeWorkflowCoordinator()
 	}
 
 	hostname, err := os.Hostname()
 	if err != nil || hostname == "" {
 		hostname = "unknown-host"
 	}
+	// The inbox still owns durable webhook delivery/retry semantics, but the
+	// workflow coordinator is now the only component allowed to derive role
+	// jobs. This prevents the legacy event route and workflow engine from
+	// dispatching duplicate work for the same GitHub fact.
+	eventStore := &orchestrator.WorkflowEventStore{Store: store, Wake: wakeWorkflowCoordinator}
 	eventProcessor := githubfactory.NewEventProcessor(
-		store,
+		eventStore,
 		"event-router@"+hostname,
 		cfg.EventPollInterval,
 		cfg.EventLeaseDuration,
@@ -77,10 +86,22 @@ func main() {
 
 	if cfg.GitHubToken != "" {
 		githubClient := githubfactory.NewClient(cfg.GitHubAPIURL, cfg.GitHubToken, nil)
-		reconciler := githubfactory.NewReconciler(githubClient, store, cfg.ReconcileInterval, wake)
+		reconciler := githubfactory.NewReconciler(githubClient, store, cfg.ReconcileInterval, wakeAll)
 		go runComponent(ctx, "github reconciler", reconciler.Run)
+
+		engine := workflow.NewEngine(store, githubClient, workflow.Config{WIPLimits: workflow.WIPLimits{
+			domain.RolePM:         cfg.WorkflowPMWIP,
+			domain.RoleTeamLead:   cfg.WorkflowTeamLeadWIP,
+			domain.RoleDev:        cfg.WorkflowDevWIP,
+			domain.RoleReviewer:   cfg.WorkflowReviewerWIP,
+			domain.RoleCIGuardian: cfg.WorkflowCIGuardianWIP,
+		}})
+		source := orchestrator.NewGitHubSnapshotSource(store, githubClient)
+		refiller := orchestrator.NewRepositoryRefiller(store, engine)
+		coordinator := workflow.NewCoordinator(source, engine, refiller, cfg.WorkflowInterval).WithWake(wakeWorkflows)
+		go runComponent(ctx, "workflow coordinator", coordinator.Run)
 	} else {
-		slog.Warn("github reconciliation disabled because SYNFACTORY_GITHUB_TOKEN is empty")
+		slog.Warn("github reconciliation and workflow coordination disabled because SYNFACTORY_GITHUB_TOKEN is empty")
 	}
 
 	go runComponent(ctx, "lease recovery", func(ctx context.Context) error {
@@ -88,7 +109,7 @@ func main() {
 	})
 
 	mux := http.NewServeMux()
-	mux.Handle("/webhooks/github", githubfactory.NewWebhookHandler(cfg.GitHubWebhookSecret, store, wake))
+	mux.Handle("/webhooks/github", githubfactory.NewWebhookHandler(cfg.GitHubWebhookSecret, store, wakeAll))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, healthResponse{Status: "ok"})
 	})
@@ -125,6 +146,13 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("api shutdown failed", "error", err)
+	}
+}
+
+func signalChannel(channel chan<- struct{}) {
+	select {
+	case channel <- struct{}{}:
+	default:
 	}
 }
 

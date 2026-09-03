@@ -24,6 +24,14 @@ type Config struct {
 	EventLeaseDuration    time.Duration
 	EventMaxAttempts      int
 	LeaseRecoveryInterval time.Duration
+	WorkflowInterval      time.Duration
+	WorkflowPMWIP         int
+	WorkflowTeamLeadWIP   int
+	WorkflowDevWIP        int
+	WorkflowReviewerWIP   int
+	WorkflowCIGuardianWIP int
+	TaskReservationTTL    time.Duration
+	RepositoryRoot        string
 }
 
 func Load() (Config, error) {
@@ -42,6 +50,14 @@ func Load() (Config, error) {
 		EventLeaseDuration:    envDuration("SYNFACTORY_EVENT_LEASE_DURATION", 30*time.Second),
 		EventMaxAttempts:      envIntPositive("SYNFACTORY_EVENT_MAX_ATTEMPTS", 5),
 		LeaseRecoveryInterval: envDuration("SYNFACTORY_LEASE_RECOVERY_INTERVAL", 30*time.Second),
+		WorkflowInterval:      envDuration("SYNFACTORY_WORKFLOW_INTERVAL", time.Minute),
+		WorkflowPMWIP:         envIntPositive("SYNFACTORY_WIP_PM", 1),
+		WorkflowTeamLeadWIP:   envIntPositive("SYNFACTORY_WIP_TEAM_LEAD", 2),
+		WorkflowDevWIP:        envIntPositive("SYNFACTORY_WIP_DEVELOPER", 2),
+		WorkflowReviewerWIP:   envIntPositive("SYNFACTORY_WIP_REVIEWER", 2),
+		WorkflowCIGuardianWIP: envIntPositive("SYNFACTORY_WIP_CI_GUARDIAN", 1),
+		TaskReservationTTL:    envDuration("SYNFACTORY_TASK_RESERVATION_TTL", 10*time.Minute),
+		RepositoryRoot:        os.Getenv("SYNFACTORY_REPOSITORY_ROOT"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, ErrDatabaseURLRequired
