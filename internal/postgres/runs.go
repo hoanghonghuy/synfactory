@@ -11,18 +11,22 @@ func (s *Store) CreateRun(ctx context.Context, run Run) (Run, error) {
 	if run.ID == "" || run.JobID == "" || run.Attempt <= 0 || run.Runtime == "" {
 		return Run{}, fmt.Errorf("run id, job id, positive attempt and runtime are required")
 	}
+	if run.Sequence <= 0 {
+		run.Sequence = 1
+	}
 	if run.Status == "" {
 		run.Status = "running"
 	}
 
 	row := s.db.QueryRowContext(ctx, `
-INSERT INTO runs (id, job_id, attempt, runtime, model, session_id, status, metadata)
-VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, $8)
-RETURNING id, job_id, attempt, runtime, COALESCE(model, ''), COALESCE(session_id, ''), status,
+INSERT INTO runs (id, job_id, attempt, sequence, runtime, model, session_id, status, metadata)
+VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8, $9)
+RETURNING id, job_id, attempt, sequence, runtime, COALESCE(model, ''), COALESCE(session_id, ''), status,
           started_at, finished_at, exit_code, COALESCE(summary, ''), metadata`,
 		run.ID,
 		run.JobID,
 		run.Attempt,
+		run.Sequence,
 		run.Runtime,
 		run.Model,
 		run.SessionID,
@@ -46,7 +50,7 @@ SET status = $2,
     session_id = COALESCE(NULLIF($6, ''), session_id)
 WHERE id = $1
   AND status IN ('pending', 'running')
-RETURNING id, job_id, attempt, runtime, COALESCE(model, ''), COALESCE(session_id, ''), status,
+RETURNING id, job_id, attempt, sequence, runtime, COALESCE(model, ''), COALESCE(session_id, ''), status,
           started_at, finished_at, exit_code, COALESCE(summary, ''), metadata`,
 		runID, status, finishedAt, exitCode, summary, sessionID,
 	)
@@ -97,6 +101,7 @@ func scanRun(row rowScanner) (Run, error) {
 		&run.ID,
 		&run.JobID,
 		&run.Attempt,
+		&run.Sequence,
 		&run.Runtime,
 		&run.Model,
 		&run.SessionID,
