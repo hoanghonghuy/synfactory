@@ -16,6 +16,7 @@ func TestLoadRequiresDatabaseURL(t *testing.T) {
 
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
+	t.Setenv("SYNFACTORY_OPERATOR_TOKEN", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -43,5 +44,20 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.WorkerLeaseDuration != 2*time.Minute || cfg.WorkerHeartbeat != 30*time.Second || cfg.WorkerStaleAfter != 2*time.Minute {
 		t.Fatalf("unexpected worker timing defaults: %+v", cfg)
+	}
+	if cfg.OperatorToken != "" {
+		t.Fatalf("operator API must be disabled by default")
+	}
+}
+
+func TestLoadOperatorToken(t *testing.T) {
+	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
+	t.Setenv("SYNFACTORY_OPERATOR_TOKEN", "operator-secret")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OperatorToken != "operator-secret" {
+		t.Fatalf("operator token was not loaded")
 	}
 }
