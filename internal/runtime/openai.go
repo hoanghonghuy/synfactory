@@ -160,7 +160,7 @@ func (a *OpenAIAdapter) execute(ctx context.Context, previousResponseID string, 
 	}
 
 	var object map[string]any
-	if err := json.Unmarshal(data, &object); err != nil {
+	if err := json.Unmarshal([]byte(output), &object); err != nil {
 		result.Outcome = OutcomeFailed
 		return result, Failure(FailurePermanent, fmt.Errorf("decode OpenAI-compatible response: %w", err))
 	}
