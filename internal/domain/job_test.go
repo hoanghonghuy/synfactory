@@ -9,7 +9,7 @@ func TestJobStopsAfterRetryBudget(t *testing.T) {
 	now := time.Now()
 	job := Job{Status: JobQueued, MaxAttempts: 2}
 
-	if err := job.Lease("worker-1", now.Add(time.Minute)); err != nil {
+	if err := job.Lease("worker-1", now, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if err := job.Start("worker-1"); err != nil {
@@ -25,7 +25,7 @@ func TestJobStopsAfterRetryBudget(t *testing.T) {
 	if err := job.Requeue(now); err != nil {
 		t.Fatal(err)
 	}
-	if err := job.Lease("worker-2", now.Add(time.Minute)); err != nil {
+	if err := job.Lease("worker-2", now, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if err := job.Start("worker-2"); err != nil {
@@ -45,10 +45,20 @@ func TestJobStopsAfterRetryBudget(t *testing.T) {
 
 func TestJobLeaseOwnerIsEnforced(t *testing.T) {
 	job := Job{Status: JobQueued, MaxAttempts: 1}
-	if err := job.Lease("worker-1", time.Now().Add(time.Minute)); err != nil {
+	now := time.Now()
+	if err := job.Lease("worker-1", now, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if err := job.Start("worker-2"); err != ErrLeaseOwnerMismatch {
 		t.Fatalf("expected ErrLeaseOwnerMismatch, got %v", err)
+	}
+}
+
+func TestJobCannotBeLeasedBeforeRetryDelay(t *testing.T) {
+	now := time.Now()
+	job := Job{Status: JobRetryWait, MaxAttempts: 2, AvailableAt: now.Add(time.Minute)}
+
+	if err := job.Lease("worker-1", now, now.Add(2*time.Minute)); err != ErrJobNotAvailable {
+		t.Fatalf("expected ErrJobNotAvailable, got %v", err)
 	}
 }
