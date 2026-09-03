@@ -1,0 +1,20 @@
+{$SYNFACTORY_DOMAIN} {
+	encode zstd gzip
+
+	@webhook path /webhooks/github
+	handle @webhook {
+		reverse_proxy api:8080
+	}
+
+	@health path /healthz /readyz
+	handle @health {
+		reverse_proxy api:8080
+	}
+
+	# Metrics and operational state stay bound to the host-only API port by
+	# default. Expose them through an authenticated observability stack instead
+	# of the public webhook hostname.
+	handle {
+		respond "not found" 404
+	}
+}
