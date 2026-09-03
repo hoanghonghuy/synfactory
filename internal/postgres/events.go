@@ -63,7 +63,7 @@ WITH candidate AS (
     SELECT id
     FROM event_inbox
     WHERE processed_at IS NULL
-      AND next_attempt_at <= $1
+      AND (process_attempt = 0 OR next_attempt_at <= $1)
       AND (processing_until IS NULL OR processing_until <= $1)
     ORDER BY received_at ASC, id ASC
     FOR UPDATE SKIP LOCKED
