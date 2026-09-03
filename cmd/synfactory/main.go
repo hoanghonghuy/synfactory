@@ -141,24 +141,11 @@ func validMode(mode string) bool {
 }
 
 func runAll(ctx context.Context, cfg config.Config, store *postgres.Store, bus *wakeBus) error {
-	child, cancel := context.WithCancel(ctx)
-	defer cancel()
-	errCh := make(chan error, 3)
-	go func() { errCh <- runScheduler(child, cfg, store, bus) }()
-	go func() { errCh <- runWorkers(child, cfg, store) }()
-	go func() { errCh <- runAPI(child, cfg, store, bus) }()
-
-	select {
-	case <-ctx.Done():
-		cancel()
-		return ctx.Err()
-	case err := <-errCh:
-		cancel()
-		if err == nil {
-			return errors.New("all-mode component stopped unexpectedly")
-		}
-		return err
-	}
+	return runComponents(ctx, []namedComponent{
+		{name: "api", run: func(ctx context.Context) error { return runAPI(ctx, cfg, store, bus) }},
+		{name: "scheduler", run: func(ctx context.Context) error { return runScheduler(ctx, cfg, store, bus) }},
+		{name: "workers", run: func(ctx context.Context) error { return runWorkers(ctx, cfg, store) }},
+	}, cfg.ShutdownTimeout)
 }
 
 func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *wakeBus) error {
@@ -256,7 +243,7 @@ func runScheduler(ctx context.Context, cfg config.Config, store *postgres.Store,
 	} else {
 		slog.Warn("github reconciliation and workflow coordination disabled because SYNFACTORY_GITHUB_TOKEN is empty")
 	}
-	return runComponents(ctx, components)
+	return runComponents(ctx, components, cfg.ShutdownTimeout)
 }
 
 func runWorkers(ctx context.Context, cfg config.Config, store *postgres.Store) error {
@@ -285,11 +272,13 @@ func runWorkers(ctx context.Context, cfg config.Config, store *postgres.Store) e
 		baseID = "worker@" + hostName()
 	}
 	components := make([]namedComponent, 0, cfg.WorkerCapacity)
+	workerIDs := make([]string, 0, cfg.WorkerCapacity)
 	for i := 0; i < cfg.WorkerCapacity; i++ {
 		workerID := baseID
 		if cfg.WorkerCapacity > 1 {
 			workerID = fmt.Sprintf("%s-%02d", baseID, i+1)
 		}
+		workerIDs = append(workerIDs, workerID)
 		worker := workerfactory.New(store, governance, builder, workerfactory.Config{
 			ID:                workerID,
 			Host:              hostName(),
@@ -302,7 +291,16 @@ func runWorkers(ctx context.Context, cfg config.Config, store *postgres.Store) e
 		}).WithExecution(workspaceManager, verification, builder)
 		components = append(components, namedComponent{name: workerID, run: worker.Run})
 	}
-	return runComponents(ctx, components)
+
+	runErr := runComponents(ctx, components, cfg.ShutdownTimeout)
+	drainCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancel()
+	for _, workerID := range workerIDs {
+		if err := store.SetWorkerDraining(drainCtx, workerID, true, time.Now().UTC()); err != nil {
+			slog.Warn("mark worker draining failed", "worker", workerID, "error", err)
+		}
+	}
+	return runErr
 }
 
 type namedComponent struct {
@@ -310,16 +308,21 @@ type namedComponent struct {
 	run  func(context.Context) error
 }
 
-func runComponents(ctx context.Context, components []namedComponent) error {
+func runComponents(ctx context.Context, components []namedComponent, shutdownTimeout time.Duration) error {
 	if len(components) == 0 {
 		return errors.New("no components configured")
 	}
+	if shutdownTimeout <= 0 {
+		shutdownTimeout = 20 * time.Second
+	}
+	child, cancel := context.WithCancel(ctx)
+	defer cancel()
 	errCh := make(chan error, len(components))
 	for _, component := range components {
 		component := component
 		go func() {
-			err := component.run(ctx)
-			if err == nil && ctx.Err() == nil {
+			err := component.run(child)
+			if err == nil && child.Err() == nil {
 				err = fmt.Errorf("%s stopped unexpectedly", component.name)
 			}
 			if err != nil && !errors.Is(err, context.Canceled) {
@@ -328,12 +331,29 @@ func runComponents(ctx context.Context, components []namedComponent) error {
 			errCh <- err
 		}()
 	}
+
+	remaining := len(components)
+	var result error
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		result = ctx.Err()
 	case err := <-errCh:
-		return err
+		remaining--
+		result = err
 	}
+	cancel()
+
+	timer := time.NewTimer(shutdownTimeout)
+	defer timer.Stop()
+	for remaining > 0 {
+		select {
+		case <-errCh:
+			remaining--
+		case <-timer.C:
+			return errors.Join(result, fmt.Errorf("component shutdown exceeded %s", shutdownTimeout))
+		}
+	}
+	return result
 }
 
 func signalChannel(channel chan<- struct{}) {
