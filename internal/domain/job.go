@@ -32,23 +32,26 @@ var (
 	ErrInvalidTransition  = errors.New("invalid job state transition")
 	ErrJobNotAvailable    = errors.New("job is not available yet")
 	ErrLeaseOwnerMismatch = errors.New("lease owner mismatch")
+	ErrLeaseExpired       = errors.New("job lease expired")
 )
 
 type Job struct {
-	ID          string
-	Repository  string
-	Kind        string
-	Role        Role
-	Subject     string
-	Revision    string
-	Priority    int
-	Status      JobStatus
-	Attempt     int
-	MaxAttempts int
-	AvailableAt time.Time
-	LeaseOwner  string
-	LeaseUntil  *time.Time
-	LastError   string
+	ID           string
+	RepositoryID string
+	Kind         string
+	Role         Role
+	Subject      string
+	Revision     string
+	Priority     int
+	Status       JobStatus
+	Attempt      int
+	MaxAttempts  int
+	AvailableAt  time.Time
+	LeaseOwner   string
+	LeaseUntil   *time.Time
+	LastError    string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 func (j *Job) Lease(workerID string, now, until time.Time) error {
@@ -68,12 +71,15 @@ func (j *Job) Lease(workerID string, now, until time.Time) error {
 	return nil
 }
 
-func (j *Job) Start(workerID string) error {
+func (j *Job) Start(workerID string, now time.Time) error {
 	if j.Status != JobLeased {
 		return ErrInvalidTransition
 	}
 	if j.LeaseOwner != workerID {
 		return ErrLeaseOwnerMismatch
+	}
+	if j.LeaseUntil == nil || !j.LeaseUntil.After(now) {
+		return ErrLeaseExpired
 	}
 	if j.MaxAttempts <= 0 || j.Attempt >= j.MaxAttempts {
 		return ErrInvalidTransition
@@ -84,12 +90,33 @@ func (j *Job) Start(workerID string) error {
 	return nil
 }
 
-func (j *Job) Succeed(workerID string) error {
+func (j *Job) RenewLease(workerID string, now, until time.Time) error {
+	if j.Status != JobLeased && j.Status != JobRunning {
+		return ErrInvalidTransition
+	}
+	if j.LeaseOwner != workerID {
+		return ErrLeaseOwnerMismatch
+	}
+	if j.LeaseUntil == nil || !j.LeaseUntil.After(now) {
+		return ErrLeaseExpired
+	}
+	if !until.After(now) {
+		return ErrInvalidTransition
+	}
+
+	j.LeaseUntil = &until
+	return nil
+}
+
+func (j *Job) Succeed(workerID string, now time.Time) error {
 	if j.Status != JobRunning {
 		return ErrInvalidTransition
 	}
 	if j.LeaseOwner != workerID {
 		return ErrLeaseOwnerMismatch
+	}
+	if j.LeaseUntil == nil || !j.LeaseUntil.After(now) {
+		return ErrLeaseExpired
 	}
 
 	j.Status = JobSucceeded
@@ -98,12 +125,15 @@ func (j *Job) Succeed(workerID string) error {
 	return nil
 }
 
-func (j *Job) Fail(workerID string, message string, retryAt time.Time) error {
+func (j *Job) Fail(workerID string, now time.Time, message string, retryAt time.Time) error {
 	if j.Status != JobRunning {
 		return ErrInvalidTransition
 	}
 	if j.LeaseOwner != workerID {
 		return ErrLeaseOwnerMismatch
+	}
+	if j.LeaseUntil == nil || !j.LeaseUntil.After(now) {
+		return ErrLeaseExpired
 	}
 
 	j.LastError = message
@@ -125,6 +155,15 @@ func (j *Job) Requeue(now time.Time) error {
 	}
 
 	j.Status = JobQueued
+	return nil
+}
+
+func (j *Job) Cancel() error {
+	if j.Terminal() {
+		return ErrInvalidTransition
+	}
+	j.Status = JobCancelled
+	j.clearLease()
 	return nil
 }
 

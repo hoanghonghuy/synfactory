@@ -12,10 +12,10 @@ func TestJobStopsAfterRetryBudget(t *testing.T) {
 	if err := job.Lease("worker-1", now, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := job.Start("worker-1"); err != nil {
+	if err := job.Start("worker-1", now); err != nil {
 		t.Fatal(err)
 	}
-	if err := job.Fail("worker-1", "ci failed", now); err != nil {
+	if err := job.Fail("worker-1", now, "ci failed", now); err != nil {
 		t.Fatal(err)
 	}
 	if job.Status != JobRetryWait {
@@ -28,10 +28,10 @@ func TestJobStopsAfterRetryBudget(t *testing.T) {
 	if err := job.Lease("worker-2", now, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := job.Start("worker-2"); err != nil {
+	if err := job.Start("worker-2", now); err != nil {
 		t.Fatal(err)
 	}
-	if err := job.Fail("worker-2", "ci still failed", now); err != nil {
+	if err := job.Fail("worker-2", now, "ci still failed", now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -49,7 +49,7 @@ func TestJobLeaseOwnerIsEnforced(t *testing.T) {
 	if err := job.Lease("worker-1", now, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := job.Start("worker-2"); err != ErrLeaseOwnerMismatch {
+	if err := job.Start("worker-2", now); err != ErrLeaseOwnerMismatch {
 		t.Fatalf("expected ErrLeaseOwnerMismatch, got %v", err)
 	}
 }
@@ -60,5 +60,37 @@ func TestJobCannotBeLeasedBeforeRetryDelay(t *testing.T) {
 
 	if err := job.Lease("worker-1", now, now.Add(2*time.Minute)); err != ErrJobNotAvailable {
 		t.Fatalf("expected ErrJobNotAvailable, got %v", err)
+	}
+}
+
+func TestJobCannotStartWithExpiredLease(t *testing.T) {
+	now := time.Now()
+	expired := now.Add(-time.Second)
+	job := Job{
+		Status:      JobLeased,
+		MaxAttempts: 1,
+		LeaseOwner:  "worker-1",
+		LeaseUntil:  &expired,
+	}
+
+	if err := job.Start("worker-1", now); err != ErrLeaseExpired {
+		t.Fatalf("expected ErrLeaseExpired, got %v", err)
+	}
+}
+
+func TestJobRenewLease(t *testing.T) {
+	now := time.Now()
+	until := now.Add(time.Minute)
+	job := Job{Status: JobQueued, MaxAttempts: 1}
+	if err := job.Lease("worker-1", now, until); err != nil {
+		t.Fatal(err)
+	}
+
+	renewedUntil := now.Add(2 * time.Minute)
+	if err := job.RenewLease("worker-1", now, renewedUntil); err != nil {
+		t.Fatal(err)
+	}
+	if job.LeaseUntil == nil || !job.LeaseUntil.Equal(renewedUntil) {
+		t.Fatalf("expected renewed lease until %v, got %v", renewedUntil, job.LeaseUntil)
 	}
 }
