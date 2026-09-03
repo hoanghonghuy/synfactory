@@ -22,7 +22,7 @@ CMD ["api"]
 FROM control AS worker
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git openssh-client postgresql-client docker.io nodejs npm \
+    && apt-get install -y --no-install-recommends git gh openssh-client postgresql-client docker.io nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 USER synfactory
 CMD ["worker"]
