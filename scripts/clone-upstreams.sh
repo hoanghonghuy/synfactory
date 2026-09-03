@@ -12,6 +12,7 @@ repos=(
   "https://github.com/vercel-labs/eve-software-factory-template.git"
   "https://github.com/disler/super-simple-software-factory.git"
   "https://github.com/All-Hands-AI/OpenHands.git"
+  "https://github.com/OpenHands/automation.git"
   "https://github.com/OpenHands/extensions.git"
   "https://github.com/FoundationAgents/MetaGPT.git"
   "https://github.com/OpenBMB/ChatDev.git"
