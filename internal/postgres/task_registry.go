@@ -1,0 +1,13 @@
+package postgres
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+func (s *Store) RegisterTask(ctx context.Context,repositoryID,fingerprint string,issueNumber int64,state string,seenAt time.Time)(bool,error){if repositoryID==""||fingerprint==""||issueNumber<=0||state==""{return false,fmt.Errorf("repository, fingerprint, issue number and state are required")};result,err:=s.db.ExecContext(ctx,`INSERT INTO task_registry(repository_id,fingerprint,issue_number,state,first_seen_at,last_seen_at) VALUES($1,$2,$3,$4,$5,$5) ON CONFLICT(repository_id,fingerprint) DO NOTHING`,repositoryID,fingerprint,issueNumber,state,seenAt);if err!=nil{return false,err};rows,err:=result.RowsAffected();if err!=nil{return false,err};if rows==0{_,err=s.db.ExecContext(ctx,`UPDATE task_registry SET issue_number=$3,state=$4,last_seen_at=$5 WHERE repository_id=$1 AND fingerprint=$2`,repositoryID,fingerprint,issueNumber,state,seenAt);if err!=nil{return false,err}};return rows==1,nil}
+
+func (s *Store) ReserveTask(ctx context.Context,repositoryID,fingerprint,owner string,now time.Time,ttl time.Duration)(bool,error){if repositoryID==""||fingerprint==""||owner==""||ttl<=0{return false,fmt.Errorf("repository, fingerprint, owner and positive ttl are required")};until:=now.Add(ttl);result,err:=s.db.ExecContext(ctx,`INSERT INTO task_registry(repository_id,fingerprint,state,reservation_owner,reservation_until,first_seen_at,last_seen_at) VALUES($1,$2,'reserved',$3,$4,$5,$5) ON CONFLICT(repository_id,fingerprint) DO UPDATE SET reservation_owner=EXCLUDED.reservation_owner,reservation_until=EXCLUDED.reservation_until,state='reserved',last_seen_at=EXCLUDED.last_seen_at WHERE task_registry.issue_number IS NULL AND (task_registry.reservation_owner=EXCLUDED.reservation_owner OR task_registry.reservation_until IS NULL OR task_registry.reservation_until<=$5)`,repositoryID,fingerprint,owner,until,now);if err!=nil{return false,err};rows,err:=result.RowsAffected();return rows==1,err}
+
+func (s *Store) BindTask(ctx context.Context,repositoryID,fingerprint,owner string,issueNumber int64,state string,seenAt time.Time)error{if repositoryID==""||fingerprint==""||owner==""||issueNumber<=0||state==""{return fmt.Errorf("repository, fingerprint, owner, issue number and state are required")};result,err:=s.db.ExecContext(ctx,`UPDATE task_registry SET issue_number=$4,state=$5,reservation_owner=NULL,reservation_until=NULL,last_seen_at=$6 WHERE repository_id=$1 AND fingerprint=$2 AND issue_number IS NULL AND reservation_owner=$3 AND reservation_until>$6`,repositoryID,fingerprint,owner,issueNumber,state,seenAt);if err!=nil{return err};rows,err:=result.RowsAffected();if err!=nil{return err};if rows!=1{return fmt.Errorf("task reservation is missing, expired or owned by another actor")};return nil}
