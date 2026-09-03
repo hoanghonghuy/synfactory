@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -241,7 +242,7 @@ func repositoryID(fullName string) string {
 }
 
 func decodeJSON(r *http.Request, target any) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 64<<10))
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
