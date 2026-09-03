@@ -3,6 +3,7 @@ name: synfactory
 services:
   postgres:
     image: postgres:16
+    profiles: ["local-db"]
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-synfactory}
@@ -34,9 +35,6 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks: [factory]
 
   scheduler:
@@ -53,9 +51,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks: [factory]
 
   worker:
@@ -64,6 +59,8 @@ services:
       target: worker
     restart: unless-stopped
     command: ["worker"]
+    # Docker-socket access is root-equivalent. Keep API/scheduler non-root;
+    # isolate this exception to workers that actually run Docker sandboxes.
     user: "0:0"
     env_file: .env
     environment:
@@ -83,9 +80,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks: [factory]
 
   caddy:
