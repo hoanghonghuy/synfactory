@@ -1,0 +1,21 @@
+{
+  "targets": [
+    {
+      "id": "control",
+      "kind": "local",
+      "work_dir": "/var/lib/synfactory",
+      "shell": "/bin/sh"
+    },
+    {
+      "id": "worker-1",
+      "kind": "ssh",
+      "host": "10.0.0.8",
+      "user": "ubuntu",
+      "port": 22,
+      "work_dir": "/opt/synfactory",
+      "shell": "/bin/bash",
+      "identity_file": "/run/secrets/synfactory-terminal/worker-1.key",
+      "known_hosts_file": "/run/secrets/synfactory-terminal/known_hosts"
+    }
+  ]
+}

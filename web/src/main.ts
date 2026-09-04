@@ -1,5 +1,6 @@
 import { createApp, nextTick } from 'vue'
 import App from './App.vue'
+import TerminalDock from './TerminalDock.vue'
 import './style.css'
 import './mobile-tables.css'
 
@@ -19,3 +20,8 @@ function labelMobileTableCells(): void {
 const observer = new MutationObserver(() => void nextTick(labelMobileTableCells))
 observer.observe(document.getElementById('app')!, { childList: true, subtree: true })
 void nextTick(labelMobileTableCells)
+
+const terminalRoot = document.createElement('div')
+terminalRoot.id = 'terminal-root'
+document.body.appendChild(terminalRoot)
+createApp(TerminalDock).mount(terminalRoot)

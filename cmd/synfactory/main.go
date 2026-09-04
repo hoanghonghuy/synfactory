@@ -166,6 +166,17 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 		onboardingGitHub = githubClient
 	}
 	repositoryAPI := onboarding.Handler{Store: store, GitHub: onboardingGitHub, Token: cfg.OperatorToken}
+	terminalService, err := configureTerminal(cfg)
+	if err != nil {
+		return fmt.Errorf("configure operator terminal: %w", err)
+	}
+	defer func() {
+		if err := terminalService.shutdown(); err != nil {
+			slog.Warn("terminal shutdown failed", "error", err)
+		}
+	}()
+	go terminalService.runReaper(ctx)
+
 	mux := http.NewServeMux()
 	mux.Handle("/webhooks/github", githubfactory.NewWebhookHandler(cfg.GitHubWebhookSecret, store, wake))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -184,6 +195,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	mux.HandleFunc("GET /metrics", metrics.Prometheus)
 	operatorAPI.Register(mux)
 	repositoryAPI.Register(mux)
+	terminalService.register(mux)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,

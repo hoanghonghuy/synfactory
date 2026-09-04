@@ -26,6 +26,12 @@ type Config struct {
 	GitHubAppPrivateKeyFile string
 	GitHubWebhookSecret     string
 	OperatorToken           string
+	TerminalEnabled         bool
+	TerminalTargetsPath     string
+	TerminalMaxSessions     int
+	TerminalMaxPerTarget    int
+	TerminalIdleTimeout     time.Duration
+	TerminalMaxLifetime     time.Duration
 	ReconcileInterval       time.Duration
 	EventPollInterval       time.Duration
 	EventLeaseDuration      time.Duration
@@ -69,6 +75,12 @@ func Load() (Config, error) {
 		GitHubAppPrivateKeyFile: strings.TrimSpace(os.Getenv("SYNFACTORY_GITHUB_APP_PRIVATE_KEY_FILE")),
 		GitHubWebhookSecret:     os.Getenv("SYNFACTORY_GITHUB_WEBHOOK_SECRET"),
 		OperatorToken:           os.Getenv("SYNFACTORY_OPERATOR_TOKEN"),
+		TerminalEnabled:         envBool("SYNFACTORY_TERMINAL_ENABLED", false),
+		TerminalTargetsPath:     envString("SYNFACTORY_TERMINAL_TARGETS", "/etc/synfactory/terminal-targets.json"),
+		TerminalMaxSessions:     envIntPositive("SYNFACTORY_TERMINAL_MAX_SESSIONS", 2),
+		TerminalMaxPerTarget:    envIntPositive("SYNFACTORY_TERMINAL_MAX_PER_TARGET", 1),
+		TerminalIdleTimeout:     envDuration("SYNFACTORY_TERMINAL_IDLE_TIMEOUT", 15*time.Minute),
+		TerminalMaxLifetime:     envDuration("SYNFACTORY_TERMINAL_MAX_LIFETIME", 2*time.Hour),
 		ReconcileInterval:       envDuration("SYNFACTORY_RECONCILE_INTERVAL", time.Hour),
 		EventPollInterval:       envDuration("SYNFACTORY_EVENT_POLL_INTERVAL", 5*time.Second),
 		EventLeaseDuration:      envDuration("SYNFACTORY_EVENT_LEASE_DURATION", 30*time.Second),
@@ -110,6 +122,9 @@ func Load() (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("unsupported SYNFACTORY_GITHUB_AUTH_MODE %q (want pat or app)", cfg.GitHubAuthMode)
 	}
+	if cfg.TerminalEnabled && strings.TrimSpace(cfg.OperatorToken) == "" {
+		return Config{}, errors.New("SYNFACTORY_OPERATOR_TOKEN is required when SYNFACTORY_TERMINAL_ENABLED=true")
+	}
 	return cfg, nil
 }
 
@@ -118,6 +133,18 @@ func envString(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func envInt(key string, fallback int) int {
