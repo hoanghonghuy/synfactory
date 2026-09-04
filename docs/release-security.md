@@ -5,7 +5,7 @@ SynFactory treats dependency and image security as release gates, not advisory-o
 ## Required gate policy
 
 - Go: run the pinned `govulncheck` scanner against `./...`; reachable known vulnerabilities fail the gate.
-- Web: install the committed lockfile with `npm ci`; `npm audit --omit=dev --audit-level=high` fails on high or critical production-dependency findings.
+- Web: verify the committed npm lockfile with `npm ci`, then scan `web/package-lock.json` with pinned Trivy. High or critical production-dependency findings fail release eligibility; development dependencies are not part of the shipped static web runtime.
 - Containers: scan the final control, worker, and web images with pinned Trivy. `high` or `critical` OS/package findings fail release eligibility unless a reviewed, time-bounded exception exists.
 - SBOM: every releasable image receives a CycloneDX SBOM generated from the exact locally built image.
 - Release evidence: CI retains the three SBOMs plus a manifest binding the exact source SHA to each immutable local image content ID. When registry publishing is enabled, registry digests and attestations extend this manifest rather than replacing it.
@@ -17,7 +17,7 @@ A positive vulnerability finding is a product/release blocker. Fix the affected 
 
 Scanner installation failures, vulnerability-database outages, registry failures, GitHub artifact-service failures, and other external network/tooling faults are infrastructure blockers. CI Guardian may make a bounded retry when fresh evidence indicates a transient fault, but must not weaken or skip the gate to obtain green CI. Repeated infrastructure failures are parked/escalated with the failing tool, exact commit, run URL, and last error.
 
-A bot-authored bootstrap commit that GitHub marks `action_required` before creating any jobs is not treated as a vulnerability or test failure. Bootstrap workflows must be removed once their one-time artifact (such as a canonical lockfile) is committed; normal PR CI then runs from the task branch head.
+Required CI is time-bounded, and a new PR head cancels an obsolete in-progress run for the same PR. This prevents a superseded commit or external security service from monopolizing CI capacity while preserving a required green run on the exact head that is authorized for merge.
 
 ## Exceptions
 
