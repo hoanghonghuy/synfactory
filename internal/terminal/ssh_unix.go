@@ -19,18 +19,18 @@ type SSHBackend struct{}
 
 type SSHFailureClass string
 
-const (
-	SSHFailureUnknown SSHFailureClass = "unknown"
-	SSHFailureHostKey SSHFailureClass = "host_key"
-	SSHFailureAuth    SSHFailureClass = "authentication"
-	SSHFailureNetwork SSHFailureClass = "network"
-)
+const SSHFailureUnknown SSHFailureClass = "unknown"
+const SSHFailureHostKey SSHFailureClass = "host_key"
+const SSHFailureAuth SSHFailureClass = "authentication"
+const SSHFailureNetwork SSHFailureClass = "network"
 
 type sshProcess struct {
-	ptyFile  *os.File
-	cmd      *exec.Cmd
-	once     sync.Once
-	closeErr error
+	ptyFile      *os.File
+	cmd          *exec.Cmd
+	once         sync.Once
+	closeErr     error
+	failureMu    sync.Mutex
+	failureClass SSHFailureClass
 }
 
 func (SSHBackend) Start(ctx context.Context, target Target, size Size) (Process, error) {
@@ -75,7 +75,7 @@ func (SSHBackend) Start(ctx context.Context, target Target, size Size) (Process,
 	if err != nil {
 		return nil, fmt.Errorf("start SSH terminal PTY: %w", err)
 	}
-	return &sshProcess{ptyFile: ptmx, cmd: cmd}, nil
+	return &sshProcess{ptyFile: ptmx, cmd: cmd, failureClass: SSHFailureUnknown}, nil
 }
 
 func ClassifySSHFailure(message string) SSHFailureClass {
@@ -118,7 +118,29 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func (p *sshProcess) Read(buffer []byte) (int, error)  { return p.ptyFile.Read(buffer) }
+func (p *sshProcess) Read(buffer []byte) (int, error) {
+	n, err := p.ptyFile.Read(buffer)
+	if n > 0 {
+		if class := ClassifySSHFailure(string(buffer[:n])); class != SSHFailureUnknown {
+			p.failureMu.Lock()
+			if p.failureClass == SSHFailureUnknown {
+				p.failureClass = class
+			}
+			p.failureMu.Unlock()
+		}
+	}
+	return n, err
+}
+
+func (p *sshProcess) FailureReason() string {
+	p.failureMu.Lock()
+	defer p.failureMu.Unlock()
+	if p.failureClass == SSHFailureUnknown {
+		return ""
+	}
+	return "ssh_" + string(p.failureClass)
+}
+
 func (p *sshProcess) Write(buffer []byte) (int, error) { return p.ptyFile.Write(buffer) }
 func (p *sshProcess) Resize(size Size) error {
 	return pty.Setsize(p.ptyFile, &pty.Winsize{Rows: normalizeDimension(size.Rows, 24), Cols: normalizeDimension(size.Cols, 80)})
