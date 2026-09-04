@@ -14,11 +14,11 @@ const (
 )
 
 const (
-	PermissionRead           Permission = "read"
+	PermissionRead             Permission = "read"
 	PermissionRepositoryMutate Permission = "repository_mutate"
-	PermissionTerminalAccess Permission = "terminal_access"
-	PermissionReleasePromote Permission = "release_promote"
-	PermissionSecurityPolicy Permission = "security_policy"
+	PermissionTerminalAccess   Permission = "terminal_access"
+	PermissionReleasePromote   Permission = "release_promote"
+	PermissionSecurityPolicy   Permission = "security_policy"
 )
 
 type RoleGrant struct {
