@@ -73,6 +73,9 @@ func runPublish(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+	if err := releasefactory.VerifyCheckoutSource(ctx, *sourceSHA, nil); err != nil {
+		return err
+	}
 	if err := releasefactory.BuildAndVerifyEvidenceImages(ctx, evidence, nil); err != nil {
 		return err
 	}
