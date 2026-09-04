@@ -27,6 +27,13 @@ func VerifyCheckoutSource(ctx context.Context, expectedSourceSHA string, runner 
 	if actual != expectedSourceSHA {
 		return fmt.Errorf("%w: checkout HEAD %s does not match gated source %s", ErrInvalidRelease, actual, expectedSourceSHA)
 	}
+	output, err = runner.CombinedOutput(ctx, "git", "diff", "--name-only", "HEAD", "--")
+	if err != nil {
+		return fmt.Errorf("%w: inspect checkout modifications: %v", ErrInvalidRelease, err)
+	}
+	if strings.TrimSpace(string(output)) != "" {
+		return fmt.Errorf("%w: tracked checkout files differ from gated source", ErrInvalidRelease)
+	}
 	return nil
 }
 
