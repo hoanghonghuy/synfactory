@@ -63,7 +63,7 @@ func TestIssueSessionRequiresSecurityPolicyPermission(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.Register(mux)
 
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/users/alice/sessions", strings.NewReader(`{"provider":"github","provider_subject":"123"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/users/alice/sessions", strings.NewReader(`{"provider":"github"}`))
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 
@@ -96,6 +96,7 @@ func TestIssueSessionCreatesGovernedOpaqueSession(t *testing.T) {
 	handler.Register(mux)
 
 	body := `{"provider":"github","provider_subject":"123","display_name":"Alice","roles":[{"role":"observer"}],"permissions":[{"permission":"terminal_access","repository_id":"repo-a"}]}`
+	body = strings.ReplaceAll(body, `\"`, `"`)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/users/alice/sessions", strings.NewReader(body))
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
