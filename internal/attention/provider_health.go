@@ -10,13 +10,13 @@ import (
 // attention or workflow truth. It is intended for operator observability and
 // escalation decisions only.
 type ProviderHealth struct {
-	Provider       string    `json:"provider"`
-	Pending        int       `json:"pending"`
-	Retrying       int       `json:"retrying"`
-	Failed         int       `json:"failed"`
-	Delivered      int       `json:"delivered"`
+	Provider        string    `json:"provider"`
+	Pending         int       `json:"pending"`
+	Retrying        int       `json:"retrying"`
+	Failed          int       `json:"failed"`
+	Delivered       int       `json:"delivered"`
 	OldestUnhealthy time.Time `json:"oldest_unhealthy_at,omitempty"`
-	Healthy        bool      `json:"healthy"`
+	Healthy         bool      `json:"healthy"`
 }
 
 // AggregateProviderHealth groups durable delivery state by provider. A provider
