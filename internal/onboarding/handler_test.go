@@ -107,6 +107,54 @@ func TestCreateRejectsInvalidIntegrationBranchWithoutPersistence(t *testing.T) {
 	}
 }
 
+func TestDisabledRegistrationCanBeStagedWithoutGitHubValidation(t *testing.T) {
+	store := &fakeStore{}
+	github := &fakeGitHub{failBranch: "main"}
+	handler := Handler{Store: store, GitHub: github, Token: "token"}
+	mux := http.NewServeMux()
+	handler.Register(mux)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/repository-config", strings.NewReader(`{"full_name":"acme/app","default_branch":"main","integration_branch":"develop","enabled":false}`))
+	request.Header.Set("Authorization", "Bearer token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if len(github.calls) != 0 {
+		t.Fatalf("disabled registration unexpectedly validated GitHub: %#v", github.calls)
+	}
+	if len(store.actions) != 1 || store.actions[0] != "register" {
+		t.Fatalf("unexpected actions: %#v", store.actions)
+	}
+}
+
+func TestEnableRequiresGitHubValidationBeforePersistence(t *testing.T) {
+	config, _ := json.Marshal(repositoryConfig{IntegrationBranch: "develop"})
+	item := postgres.Repository{ID: "repo-1", Provider: "github", FullName: "acme/app", DefaultBranch: "main", Enabled: false, Config: config}
+	store := &fakeStore{items: map[string]postgres.Repository{"repo-1": item}}
+	github := &fakeGitHub{failBranch: "main"}
+	handler := Handler{Store: store, GitHub: github, Token: "token"}
+	mux := http.NewServeMux()
+	handler.Register(mux)
+
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/repository-config/repo-1", strings.NewReader(`{"enabled":true}`))
+	request.Header.Set("Authorization", "Bearer token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if len(store.actions) != 0 {
+		t.Fatalf("repository was enabled despite failed validation: %#v", store.actions)
+	}
+	if len(github.calls) != 1 || github.calls[0] != "acme/app:main" {
+		t.Fatalf("unexpected validation calls: %#v", github.calls)
+	}
+}
+
 func TestDisableDoesNotRequireGitHubAndUsesDisableAction(t *testing.T) {
 	config, _ := json.Marshal(repositoryConfig{IntegrationBranch: "develop"})
 	item := postgres.Repository{ID: "repo-1", Provider: "github", FullName: "acme/app", DefaultBranch: "main", Enabled: true, Config: config}
