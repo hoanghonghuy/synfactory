@@ -57,43 +57,50 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload, targe
 	if err != nil {
 		return fmt.Errorf("encode github request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create github request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "SynFactory")
-	if c.tokenSource != nil {
-		token, err := c.tokenSource.Token(ctx)
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(body))
 		if err != nil {
-			return fmt.Errorf("resolve github token: %w", err)
+			return fmt.Errorf("create github request: %w", err)
 		}
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		req.Header.Set("User-Agent", "SynFactory")
+		if c.tokenSource != nil {
+			token, err := c.tokenForPath(ctx, path)
+			if err != nil {
+				return fmt.Errorf("resolve github token: %w", err)
+			}
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
 		}
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("github request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		message := strings.TrimSpace(string(responseBody))
-		if rateErr := c.rateLimitError(resp, message); rateErr != nil {
-			return rateErr
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("github request: %w", err)
 		}
-		return fmt.Errorf("github API %s: status=%d body=%s", path, resp.StatusCode, message)
-	}
-	if target == nil || resp.StatusCode == http.StatusNoContent {
+		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 && c.invalidateTokenForPath(path) {
+			_ = resp.Body.Close()
+			continue
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			message := strings.TrimSpace(string(responseBody))
+			if rateErr := c.rateLimitError(resp, message); rateErr != nil {
+				return rateErr
+			}
+			return fmt.Errorf("github API %s: status=%d body=%s", path, resp.StatusCode, message)
+		}
+		if target == nil || resp.StatusCode == http.StatusNoContent {
+			return nil
+		}
+		if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+			return fmt.Errorf("decode github response %s: %w", path, err)
+		}
 		return nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
-		return fmt.Errorf("decode github response %s: %w", path, err)
-	}
-	return nil
+	return fmt.Errorf("github API %s: authentication retry exhausted", path)
 }
 
 func (c *Client) Merge(ctx context.Context, repository string, number int64, expectedHeadSHA string) error {
