@@ -76,13 +76,13 @@ func NewAppRepositoryTokenSource(baseURL string, appID int64, privateKeyPEM []by
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &AppRepositoryTokenSource{
-		baseURL:        strings.TrimRight(baseURL, "/"),
-		appID:          appID,
-		privateKey:     append([]byte(nil), privateKeyPEM...),
-		httpClient:     httpClient,
-		now:            func() time.Time { return time.Now().UTC() },
-		installations:  make(map[string]int64),
-		tokens:         make(map[int64]*AppTokenSource),
+		baseURL:       strings.TrimRight(baseURL, "/"),
+		appID:         appID,
+		privateKey:    append([]byte(nil), privateKeyPEM...),
+		httpClient:    httpClient,
+		now:           func() time.Time { return time.Now().UTC() },
+		installations: make(map[string]int64),
+		tokens:        make(map[int64]*AppTokenSource),
 	}, nil
 }
 
