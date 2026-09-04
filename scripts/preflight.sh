@@ -19,6 +19,15 @@ placeholder() {
   [[ -z "$value" || "$value" == *replace-with* || "$value" == *changeme* || "$value" == *factory.example.com* ]]
 }
 
+resolve_host_path() {
+  local value="$1"
+  if [[ "$value" == /* ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s/%s\n' "$ROOT" "${value#./}"
+  fi
+}
+
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "ERROR: environment file not found: $ENV_FILE" >&2
   exit 1
@@ -80,48 +89,86 @@ for key in SYNFACTORY_REPOSITORY_ROOT SYNFACTORY_WORKSPACE_ROOT; do
   fi
 done
 
-RUNTIME_HOST="${SYNFACTORY_RUNTIME_CONFIG_HOST:-$ROOT/config/runtimes.local.json}"
+RUNTIME_HOST="$(resolve_host_path "${SYNFACTORY_RUNTIME_CONFIG_HOST:-config/runtimes.local.json}")"
+AGENT_BIN_HOST="$(resolve_host_path "${SYNFACTORY_AGENT_BIN:-data/agent-bin}")"
+AGENT_HOME_HOST="$(resolve_host_path "${SYNFACTORY_AGENT_HOME:-data/agent-home}")"
 if [[ ! -r "$RUNTIME_HOST" ]]; then
   fail "runtime config is not readable: $RUNTIME_HOST"
 elif command -v python3 >/dev/null 2>&1; then
-  if ! python3 - "$RUNTIME_HOST" <<'PY'
-import json, sys
-path = sys.argv[1]
+  if ! python3 - "$RUNTIME_HOST" "$AGENT_BIN_HOST" "$AGENT_HOME_HOST" <<'PY'
+import json
+import os
+import pathlib
+import shutil
+import sys
+
+path, agent_bin, agent_home = sys.argv[1:]
 try:
-    data = json.load(open(path, encoding="utf-8"))
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
 except Exception as exc:
     print(f"runtime config parse failed: {exc}", file=sys.stderr)
     raise SystemExit(1)
+
 runtimes = data.get("runtimes") or {}
 roles = data.get("roles") or {}
 if not runtimes or not roles:
     print("runtime config requires non-empty runtimes and roles", file=sys.stderr)
     raise SystemExit(1)
+
 referenced = []
 for role in roles.values():
     for item in role.get("chain", []):
         name = item.get("runtime")
-        if name:
+        if name and name not in referenced:
             referenced.append(name)
-viable = False
+
+search_dirs = [pathlib.Path(agent_bin), pathlib.Path(agent_home) / ".local" / "bin"]
+
+def binary_available(binary):
+    if not binary:
+        return False
+    candidate = pathlib.Path(binary)
+    if candidate.is_absolute():
+        return candidate.is_file() and os.access(candidate, os.X_OK)
+    if "/" in binary:
+        return False
+    if shutil.which(binary):
+        return True
+    return any((directory / binary).is_file() and os.access(directory / binary, os.X_OK) for directory in search_dirs)
+
+def secret_available(name):
+    value = os.environ.get(name, "").strip()
+    return bool(value) and "replace-with" not in value and "changeme" not in value
+
 for name in referenced:
     runtime = runtimes.get(name) or {}
-    kind = runtime.get("kind", "")
-    if runtime.get("binary"):
-        viable = True
-        break
-    if kind == "openai_compatible":
+    if binary_available(str(runtime.get("binary", ""))):
+        print(f"runtime route available: {name}")
+        raise SystemExit(0)
+    if runtime.get("kind") == "openai_compatible":
         base = str(runtime.get("base_url", ""))
         model = str(runtime.get("model", ""))
-        if base.startswith(("http://", "https://")) and model and "replace-with" not in model:
-            viable = True
-            break
-if not viable:
-    print("no structurally viable runtime is referenced by any role chain", file=sys.stderr)
-    raise SystemExit(1)
+        key_env = str(runtime.get("api_key_env", ""))
+        if (
+            base.startswith(("http://", "https://"))
+            and model
+            and "replace-with" not in model
+            and key_env
+            and secret_available(key_env)
+        ):
+            print(f"runtime route available: {name}")
+            raise SystemExit(0)
+
+print(
+    "no usable runtime route: install at least one referenced CLI in the mounted agent bin/home, "
+    "or configure a referenced OpenAI-compatible endpoint with model and API key",
+    file=sys.stderr,
+)
+raise SystemExit(1)
 PY
   then
-    fail "runtime configuration has no viable role route"
+    fail "runtime configuration has no usable role route"
   fi
 fi
 
@@ -136,4 +183,4 @@ if (( ERRORS > 0 )); then
   exit 1
 fi
 
-info "environment, GitHub auth, storage roots, runtime config, and Compose configuration are launch-ready"
+info "environment, GitHub auth, storage roots, runtime route, and Compose configuration are launch-ready"
