@@ -87,6 +87,7 @@ jobs:
         timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.70.0
           scan-type: fs
           scan-ref: web
           scanners: vuln
@@ -118,6 +119,7 @@ jobs:
         timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.70.0
           scan-type: image
           image-ref: synfactory-control:ci
           format: table
@@ -129,6 +131,7 @@ jobs:
         timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.70.0
           scan-type: image
           image-ref: synfactory-worker:ci
           format: table
@@ -140,6 +143,7 @@ jobs:
         timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.70.0
           scan-type: image
           image-ref: synfactory-web:ci
           format: table
@@ -154,6 +158,7 @@ jobs:
         timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.70.0
           image-ref: synfactory-control:ci
           scan-type: image
           format: cyclonedx
@@ -164,6 +169,7 @@ jobs:
         timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.70.0
           image-ref: synfactory-worker:ci
           scan-type: image
           format: cyclonedx
@@ -174,6 +180,7 @@ jobs:
         timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.70.0
           image-ref: synfactory-web:ci
           scan-type: image
           format: cyclonedx
@@ -186,10 +193,14 @@ jobs:
         run: |
           jq -n \
             --arg source_sha "$SOURCE_SHA" \
+            --arg web_lock_sha256 "$(sha256sum web/package-lock.json | awk '{print $1}')" \
             --arg control_image_id "$(docker image inspect synfactory-control:ci --format '{{.Id}}')" \
             --arg worker_image_id "$(docker image inspect synfactory-worker:ci --format '{{.Id}}')" \
             --arg web_image_id "$(docker image inspect synfactory-web:ci --format '{{.Id}}')" \
-            '{source_sha:$source_sha,images:{control:{local_id:$control_image_id},worker:{local_id:$worker_image_id},web:{local_id:$web_image_id}}}' \
+            --arg control_sbom_sha256 "$(sha256sum release-evidence/control.cdx.json | awk '{print $1}')" \
+            --arg worker_sbom_sha256 "$(sha256sum release-evidence/worker.cdx.json | awk '{print $1}')" \
+            --arg web_sbom_sha256 "$(sha256sum release-evidence/web.cdx.json | awk '{print $1}')" \
+            '{source_sha:$source_sha,web_lock_sha256:$web_lock_sha256,scanners:{govulncheck:"v1.7.0",trivy:"v0.70.0"},gates:{go_vulnerability:"passed",frontend_dependency:"passed",control_image:"passed",worker_image:"passed",web_image:"passed"},images:{control:{local_id:$control_image_id},worker:{local_id:$worker_image_id},web:{local_id:$web_image_id}},sboms:{control:{path:"control.cdx.json",sha256:$control_sbom_sha256},worker:{path:"worker.cdx.json",sha256:$worker_sbom_sha256},web:{path:"web.cdx.json",sha256:$web_sbom_sha256}}}' \
             > release-evidence/manifest.json
 
       - name: Upload release evidence
