@@ -3,3 +3,4 @@ services:
     volumes:
       - ${SYNFACTORY_TERMINAL_TARGETS_HOST:-./config/terminal-targets.json}:/etc/synfactory/terminal-targets.json:ro
       - ${SYNFACTORY_TERMINAL_SSH_DIR_HOST:-./secrets/terminal-ssh}:/run/secrets/synfactory-terminal:ro
+      - ${SYNFACTORY_TERMINAL_AUDIT_HOST:-./data/terminal-audit}:/var/lib/synfactory/terminal-audit
