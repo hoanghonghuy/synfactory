@@ -67,6 +67,22 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           "$(go env GOPATH)/bin/govulncheck" ./...
 
+      - name: Verify reproducible web dependencies
+        run: |
+          docker run --rm \
+            -v "$PWD/web:/app" \
+            -w /app \
+            node:24-alpine \
+            sh -lc 'npm ci --ignore-scripts --no-audit --no-fund && git diff --exit-code -- package-lock.json'
+
+      - name: Frontend dependency audit
+        run: |
+          docker run --rm \
+            -v "$PWD/web:/app" \
+            -w /app \
+            node:24-alpine \
+            sh -lc 'npm audit --audit-level=high --omit=dev'
+
       - name: Validate operations scripts
         run: bash -n scripts/backup.sh scripts/restore.sh
 
