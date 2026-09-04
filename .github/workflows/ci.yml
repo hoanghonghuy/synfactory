@@ -10,9 +10,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16
@@ -63,9 +68,34 @@ jobs:
         run: go test ./...
 
       - name: Go vulnerability scan
+        timeout-minutes: 10
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - name: Verify reproducible web dependencies
+        timeout-minutes: 8
+        run: |
+          docker run --rm \
+            -v "$PWD/web/package.json:/app/package.json:ro" \
+            -v "$PWD/web/package-lock.json:/app/package-lock.json:ro" \
+            -w /app \
+            node:24-alpine \
+            sh -lc 'npm ci --ignore-scripts --no-audit --no-fund'
+
+      - name: Scan frontend dependencies
+        timeout-minutes: 10
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0
+          scan-type: fs
+          scan-ref: web
+          scanners: vuln
+          vuln-type: library
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: 'false'
 
       - name: Validate operations scripts
         run: bash -n scripts/backup.sh scripts/restore.sh scripts/preflight.sh
@@ -116,3 +146,100 @@ jobs:
 
       - name: Build web control center image
         run: docker build -t synfactory-web:ci ./web
+
+      - name: Scan control image
+        timeout-minutes: 10
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0
+          scan-type: image
+          image-ref: synfactory-control:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: 'false'
+
+      - name: Scan worker image
+        timeout-minutes: 10
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0
+          scan-type: image
+          image-ref: synfactory-worker:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: 'false'
+
+      - name: Scan web image
+        timeout-minutes: 10
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0
+          scan-type: image
+          image-ref: synfactory-web:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: 'false'
+
+      - name: Prepare release evidence directory
+        run: mkdir -p release-evidence
+
+      - name: Generate control SBOM
+        timeout-minutes: 10
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0
+          image-ref: synfactory-control:ci
+          scan-type: image
+          format: cyclonedx
+          output: release-evidence/control.cdx.json
+          exit-code: '0'
+
+      - name: Generate worker SBOM
+        timeout-minutes: 10
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0
+          image-ref: synfactory-worker:ci
+          scan-type: image
+          format: cyclonedx
+          output: release-evidence/worker.cdx.json
+          exit-code: '0'
+
+      - name: Generate web SBOM
+        timeout-minutes: 10
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.70.0
+          image-ref: synfactory-web:ci
+          scan-type: image
+          format: cyclonedx
+          output: release-evidence/web.cdx.json
+          exit-code: '0'
+
+      - name: Record exact-head release manifest
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          jq -n \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg web_lock_sha256 "$(sha256sum web/package-lock.json | awk '{print $1}')" \
+            --arg control_image_id "$(docker image inspect synfactory-control:ci --format '{{.Id}}')" \
+            --arg worker_image_id "$(docker image inspect synfactory-worker:ci --format '{{.Id}}')" \
+            --arg web_image_id "$(docker image inspect synfactory-web:ci --format '{{.Id}}')" \
+            --arg control_sbom_sha256 "$(sha256sum release-evidence/control.cdx.json | awk '{print $1}')" \
+            --arg worker_sbom_sha256 "$(sha256sum release-evidence/worker.cdx.json | awk '{print $1}')" \
+            --arg web_sbom_sha256 "$(sha256sum release-evidence/web.cdx.json | awk '{print $1}')" \
+            '{source_sha:$source_sha,web_lock_sha256:$web_lock_sha256,scanners:{govulncheck:"v1.7.0",trivy:"v0.70.0"},gates:{go_vulnerability:"passed",frontend_dependency:"passed",control_image:"passed",worker_image:"passed",web_image:"passed"},images:{control:{local_id:$control_image_id},worker:{local_id:$worker_image_id},web:{local_id:$web_image_id}},sboms:{control:{path:"control.cdx.json",sha256:$control_sbom_sha256},worker:{path:"worker.cdx.json",sha256:$worker_sbom_sha256},web:{path:"web.cdx.json",sha256:$web_sbom_sha256}}}' \
+            > release-evidence/manifest.json
+
+      - name: Upload release evidence
+        timeout-minutes: 10
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          path: release-evidence/
+          if-no-files-found: error
+          retention-days: 30

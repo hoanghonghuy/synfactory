@@ -5,16 +5,19 @@ SynFactory treats dependency and image security as release gates, not advisory-o
 ## Required gate policy
 
 - Go: run the pinned `govulncheck` scanner against `./...`; reachable known vulnerabilities fail the gate.
-- Web: once the committed npm lockfile is present, install with `npm ci` and fail `npm audit` on `high` or `critical` findings affecting the production dependency graph.
-- Containers: scan the final control, worker, and web images. `high` or `critical` OS/package findings fail release eligibility unless a reviewed, time-bounded exception exists.
-- SBOM: every releasable image must have an SPDX or CycloneDX SBOM associated with the exact image digest and source commit.
-- GitHub Actions used by required workflows must be pinned to immutable commit SHAs. Keep the intended upstream release in a trailing comment (for example `# v7`) so updates remain reviewable.
+- Web: verify the committed npm lockfile with `npm ci`, then scan `web/package-lock.json` with pinned Trivy. High or critical production-dependency findings fail release eligibility; development dependencies are not part of the shipped static web runtime.
+- Containers: scan the final control, worker, and web images with pinned Trivy. `high` or `critical` OS/package findings fail release eligibility unless a reviewed, time-bounded exception exists.
+- SBOM: every releasable image receives a CycloneDX SBOM generated from the exact locally built image.
+- Release evidence: CI retains the three SBOMs plus a manifest binding the exact source SHA to each immutable local image content ID. When registry publishing is enabled, registry digests and attestations extend this manifest rather than replacing it.
+- GitHub Actions used by required workflows are pinned to immutable commit SHAs. Keep the intended upstream release in a trailing comment (for example `# v7`) so updates remain reviewable.
 
 ## Failure classification
 
 A positive vulnerability finding is a product/release blocker. Fix the affected dependency/image or record a reviewed exception before release.
 
 Scanner installation failures, vulnerability-database outages, registry failures, GitHub artifact-service failures, and other external network/tooling faults are infrastructure blockers. CI Guardian may make a bounded retry when fresh evidence indicates a transient fault, but must not weaken or skip the gate to obtain green CI. Repeated infrastructure failures are parked/escalated with the failing tool, exact commit, run URL, and last error.
+
+Required CI is time-bounded, and a new PR head cancels an obsolete in-progress run for the same PR. This prevents a superseded commit or external security service from monopolizing CI capacity while preserving a required green run on the exact head that is authorized for merge.
 
 ## Exceptions
 
@@ -43,6 +46,8 @@ For each update:
 
 Tool versions installed inside CI should also be explicit rather than `@latest` so a release does not silently change the scanner used to authorize it.
 
-## Release evidence
+## Release evidence and publishing
 
-Release evidence must identify the source commit, image name/tag, immutable image digest, scanner/tool version, scan result, and SBOM artifact. When registry publishing/provenance is enabled, attestations must bind back to the same digest rather than to a mutable tag alone.
+PR CI builds `synfactory-control:ci`, `synfactory-worker:ci`, and `synfactory-web:ci`, scans those exact images, generates CycloneDX SBOMs, and uploads a `release-evidence-<source-sha>` artifact containing the SBOMs and manifest. This evidence is portable and does not depend on a particular registry or paid attestation feature.
+
+For a later registry-publishing workflow, use immutable tags derived from the source commit or an explicit release version, resolve the pushed registry digest, and record that digest in provenance/attestation evidence. Never authorize deployment from a mutable tag alone, and never claim a local Docker image ID is a registry digest.
