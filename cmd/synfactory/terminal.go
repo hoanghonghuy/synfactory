@@ -10,6 +10,8 @@ import (
 	"github.com/hoanghonghuy/synfactory/internal/terminal"
 )
 
+const terminalAuditPath = "/var/lib/synfactory/terminal-audit/session-events.jsonl"
+
 type configuredTerminal struct {
 	manager *terminal.Manager
 	handler *terminal.Handler
@@ -34,6 +36,13 @@ func configureTerminal(cfg config.Config) (*configuredTerminal, error) {
 		terminal.TargetLocal: terminal.LocalBackend{},
 		terminal.TargetSSH:   terminal.SSHBackend{},
 	})
+	if cfg.TerminalEnabled {
+		audit, err := terminal.NewFileAuditSink(terminalAuditPath)
+		if err != nil {
+			return nil, fmt.Errorf("configure terminal audit: %w", err)
+		}
+		manager.SetAuditSink(audit)
+	}
 	return &configuredTerminal{
 		manager: manager,
 		handler: &terminal.Handler{Manager: manager, Token: cfg.OperatorToken},
