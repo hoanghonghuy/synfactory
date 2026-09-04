@@ -1,7 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { OperatorApi, OperatorApiError } from './api'
-import type { Evidence, Job, Overview, Repository, Run, Worker, Workflow, WorkflowDetail } from './types'
+import type {
+  Evidence,
+  Job,
+  Overview,
+  Repository,
+  RepositoryConfig,
+  RepositoryConfigAudit,
+  Run,
+  Worker,
+  Workflow,
+  WorkflowDetail,
+} from './types'
 
 type View = 'overview' | 'workflows' | 'jobs' | 'runs' | 'repositories' | 'workers'
 
@@ -11,6 +22,14 @@ const tokenInput = ref('')
 const view = ref<View>('overview')
 const overview = ref<Overview | null>(null)
 const repositories = ref<Repository[]>([])
+const repositoryConfigs = ref<RepositoryConfig[]>([])
+const repositoryAudit = ref<RepositoryConfigAudit[]>([])
+const auditedRepository = ref<RepositoryConfig | null>(null)
+const repositoryFullName = ref('')
+const repositoryDefaultBranch = ref('main')
+const repositoryIntegrationBranch = ref('develop')
+const repositoryWorkspacePolicy = ref('')
+const repositorySaving = ref(false)
 const workflows = ref<Workflow[]>([])
 const jobs = ref<Job[]>([])
 const runs = ref<Run[]>([])
@@ -23,7 +42,11 @@ const error = ref('')
 const lastUpdated = ref<Date | null>(null)
 
 const api = computed(() => (token.value ? new OperatorApi(token.value) : null))
-const repositoryNames = computed(() => new Map(repositories.value.map((item) => [item.id, item.full_name])))
+const repositoryNames = computed(() => {
+  const names = new Map(repositories.value.map((item) => [item.id, item.full_name]))
+  for (const item of repositoryConfigs.value) names.set(item.id, item.full_name)
+  return names
+})
 const attentionCount = computed(() => overview.value?.attention_workflows?.length ?? 0)
 
 async function refresh(): Promise<void> {
@@ -31,9 +54,10 @@ async function refresh(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    const [nextOverview, nextRepositories, nextJobs, nextWorkflows, nextRuns, nextWorkers] = await Promise.all([
+    const [nextOverview, nextRepositories, nextRepositoryConfigs, nextJobs, nextWorkflows, nextRuns, nextWorkers] = await Promise.all([
       api.value.overview(),
       api.value.repositories(),
+      api.value.repositoryConfigs(),
       api.value.jobs(),
       api.value.workflows(),
       api.value.runs(),
@@ -41,6 +65,7 @@ async function refresh(): Promise<void> {
     ])
     overview.value = nextOverview
     repositories.value = nextRepositories.items ?? []
+    repositoryConfigs.value = nextRepositoryConfigs.items ?? []
     jobs.value = nextJobs.items ?? []
     workflows.value = nextWorkflows.items ?? []
     runs.value = nextRuns.items ?? []
@@ -72,6 +97,9 @@ function lock(): void {
   sessionStorage.removeItem('synfactory.operator.token')
   overview.value = null
   repositories.value = []
+  repositoryConfigs.value = []
+  repositoryAudit.value = []
+  auditedRepository.value = null
   workflows.value = []
   jobs.value = []
   runs.value = []
@@ -79,6 +107,57 @@ function lock(): void {
   selectedWorkflow.value = null
   selectedRun.value = null
   selectedEvidence.value = []
+}
+
+async function registerRepository(): Promise<void> {
+  if (!api.value || repositorySaving.value) return
+  const fullName = repositoryFullName.value.trim()
+  if (!fullName) return
+  repositorySaving.value = true
+  error.value = ''
+  try {
+    await api.value.registerRepository({
+      full_name: fullName,
+      default_branch: repositoryDefaultBranch.value.trim() || 'main',
+      integration_branch: repositoryIntegrationBranch.value.trim() || 'develop',
+      workspace_policy: repositoryWorkspacePolicy.value.trim() || undefined,
+      enabled: true,
+    })
+    repositoryFullName.value = ''
+    repositoryWorkspacePolicy.value = ''
+    await refresh()
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : 'Unable to register repository.'
+  } finally {
+    repositorySaving.value = false
+  }
+}
+
+async function toggleRepository(item: RepositoryConfig): Promise<void> {
+  if (!api.value || repositorySaving.value) return
+  repositorySaving.value = true
+  error.value = ''
+  try {
+    await api.value.updateRepository(item.id, { enabled: !item.enabled })
+    if (auditedRepository.value?.id === item.id) auditedRepository.value = null
+    await refresh()
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : 'Unable to update repository state.'
+  } finally {
+    repositorySaving.value = false
+  }
+}
+
+async function inspectRepositoryAudit(item: RepositoryConfig): Promise<void> {
+  if (!api.value) return
+  error.value = ''
+  try {
+    const result = await api.value.repositoryAudit(item.id)
+    auditedRepository.value = item
+    repositoryAudit.value = result.items ?? []
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : 'Unable to load repository audit.'
+  }
 }
 
 async function inspectWorkflow(id: string): Promise<void> {
@@ -252,8 +331,38 @@ if (token.value) void refresh()
       </section>
 
       <section v-else-if="view === 'repositories'" class="panel full">
-        <div class="panel-heading"><div><p class="eyebrow">Managed sources</p><h2>Repositories</h2></div><span>{{ repositories.length }} enabled</span></div>
-        <div class="card-grid"><article v-for="item in repositories" :key="item.id" class="repo-card"><div><span class="provider">{{ item.provider }}</span><h3>{{ item.full_name }}</h3></div><dl><div><dt>Integration/default</dt><dd>{{ item.default_branch }}</dd></div><div><dt>Status</dt><dd><span class="badge good">enabled</span></dd></div><div><dt>Updated</dt><dd>{{ formatTime(item.updated_at) }}</dd></div></dl></article></div>
+        <div class="panel-heading"><div><p class="eyebrow">Managed sources</p><h2>Repository onboarding</h2></div><span>{{ repositoryConfigs.length }} configured</span></div>
+        <form class="unlock-form" @submit.prevent="registerRepository">
+          <input v-model="repositoryFullName" placeholder="owner/repository" autocomplete="off" />
+          <input v-model="repositoryDefaultBranch" placeholder="default branch" autocomplete="off" />
+          <input v-model="repositoryIntegrationBranch" placeholder="integration branch" autocomplete="off" />
+          <input v-model="repositoryWorkspacePolicy" placeholder="workspace policy (optional)" autocomplete="off" />
+          <button type="submit" :disabled="repositorySaving || !repositoryFullName.trim()">{{ repositorySaving ? 'Saving…' : 'Register & validate' }}</button>
+        </form>
+        <p class="security-note">Activation validates GitHub access plus both required branches. Secrets are never returned by this API.</p>
+        <div class="card-grid">
+          <article v-for="item in repositoryConfigs" :key="item.id" class="repo-card">
+            <div><span class="provider">{{ item.provider }}</span><h3>{{ item.full_name }}</h3></div>
+            <dl>
+              <div><dt>Default branch</dt><dd>{{ item.default_branch }}</dd></div>
+              <div><dt>Integration branch</dt><dd>{{ item.integration_branch }}</dd></div>
+              <div><dt>Config version</dt><dd>v{{ item.config_version }}</dd></div>
+              <div><dt>Workspace policy</dt><dd>{{ item.workspace_policy || 'default' }}</dd></div>
+              <div><dt>Status</dt><dd><span class="badge" :class="item.enabled ? 'good' : 'bad'">{{ item.enabled ? 'enabled' : 'disabled' }}</span></dd></div>
+            </dl>
+            <div class="budget-row">
+              <button class="link-button" :disabled="repositorySaving" @click="toggleRepository(item)">{{ item.enabled ? 'Disable' : 'Enable & validate' }}</button>
+              <button class="link-button" @click="inspectRepositoryAudit(item)">Audit</button>
+            </div>
+          </article>
+        </div>
+        <section v-if="auditedRepository" class="panel">
+          <div class="panel-heading"><div><p class="eyebrow">Mutation evidence</p><h2>{{ auditedRepository.full_name }} audit</h2></div><span>{{ repositoryAudit.length }} entries</span></div>
+          <div v-if="!repositoryAudit.length" class="empty">No configuration mutations recorded.</div>
+          <div v-else class="table-wrap"><table><thead><tr><th>Version</th><th>Action</th><th>Actor</th><th>Created</th></tr></thead><tbody>
+            <tr v-for="entry in repositoryAudit" :key="entry.id"><td>v{{ entry.config_version }}</td><td>{{ entry.action }}</td><td>{{ entry.actor }}</td><td>{{ formatTime(entry.created_at) }}</td></tr>
+          </tbody></table></div>
+        </section>
       </section>
 
       <section v-else class="panel full">

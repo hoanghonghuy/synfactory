@@ -17,6 +17,7 @@ import (
 	"github.com/hoanghonghuy/synfactory/internal/controlcenter"
 	"github.com/hoanghonghuy/synfactory/internal/domain"
 	githubfactory "github.com/hoanghonghuy/synfactory/internal/github"
+	"github.com/hoanghonghuy/synfactory/internal/onboarding"
 	"github.com/hoanghonghuy/synfactory/internal/operations"
 	"github.com/hoanghonghuy/synfactory/internal/orchestrator"
 	"github.com/hoanghonghuy/synfactory/internal/postgres"
@@ -156,6 +157,11 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	}
 	metrics := operations.Handler{Store: store, WorkerStaleAfter: cfg.WorkerStaleAfter}
 	operatorAPI := controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter}
+	var onboardingGitHub onboarding.GitHub
+	if strings.TrimSpace(cfg.GitHubToken) != "" {
+		onboardingGitHub = githubfactory.NewClient(cfg.GitHubAPIURL, cfg.GitHubToken, nil)
+	}
+	repositoryAPI := onboarding.Handler{Store: store, GitHub: onboardingGitHub, Token: cfg.OperatorToken}
 	mux := http.NewServeMux()
 	mux.Handle("/webhooks/github", githubfactory.NewWebhookHandler(cfg.GitHubWebhookSecret, store, wake))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -173,6 +179,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	mux.HandleFunc("GET /ops", metrics.JSON)
 	mux.HandleFunc("GET /metrics", metrics.Prometheus)
 	operatorAPI.Register(mux)
+	repositoryAPI.Register(mux)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
