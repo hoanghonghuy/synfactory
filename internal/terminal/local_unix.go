@@ -18,15 +18,22 @@ import (
 type LocalBackend struct{}
 
 type localProcess struct {
-	ptyFile *os.File
-	cmd     *exec.Cmd
-	once    sync.Once
+	ptyFile  *os.File
+	cmd      *exec.Cmd
+	once     sync.Once
 	closeErr error
 }
 
 func (LocalBackend) Start(ctx context.Context, target Target, size Size) (Process, error) {
 	if target.Kind != TargetLocal {
 		return nil, fmt.Errorf("local terminal backend cannot start target kind %q", target.Kind)
+	}
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 	}
 	shell := target.Shell
 	if shell == "" {
@@ -40,17 +47,7 @@ func (LocalBackend) Start(ctx context.Context, target Target, size Size) (Proces
 	if err != nil {
 		return nil, fmt.Errorf("start local terminal PTY: %w", err)
 	}
-	process := &localProcess{ptyFile: ptmx, cmd: cmd}
-	if ctx != nil {
-		go func() {
-			select {
-			case <-ctx.Done():
-				_ = process.Close()
-			case <-processDone(cmd):
-			}
-		}()
-	}
-	return process, nil
+	return &localProcess{ptyFile: ptmx, cmd: cmd}, nil
 }
 
 func normalizeDimension(value, fallback uint16) uint16 {
@@ -58,17 +55,6 @@ func normalizeDimension(value, fallback uint16) uint16 {
 		return fallback
 	}
 	return value
-}
-
-func processDone(cmd *exec.Cmd) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		if cmd.Process != nil {
-			_, _ = cmd.Process.Wait()
-		}
-		close(done)
-	}()
-	return done
 }
 
 func (p *localProcess) Read(buffer []byte) (int, error) {
@@ -106,9 +92,10 @@ func (p *localProcess) Close() error {
 			}
 		}
 		if p.cmd != nil && p.cmd.Process != nil && p.cmd.ProcessState == nil {
-			// creack/pty starts the shell in a new session whose process-group ID
-			// is the shell PID. Killing the group ensures foreground children are
-			// not orphaned when an operator closes a session or the API shuts down.
+			// creack/pty starts the shell in a new session and makes it the
+			// controlling-terminal owner. Kill that process group on explicit
+			// session teardown so the shell and its foreground children cannot
+			// outlive SynFactory's terminal session capacity/accounting.
 			if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 				errs = append(errs, err)
 			}
