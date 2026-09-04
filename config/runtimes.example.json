@@ -29,7 +29,7 @@
     },
     "router-fallback": {
       "kind": "openai_compatible",
-      "base_url": "http://127.0.0.1:20128/v1",
+      "base_url": "http://host.docker.internal:20128/v1",
       "api_style": "responses",
       "api_key_env": "SYNFACTORY_ROUTER_API_KEY",
       "model": "replace-with-router-model"
