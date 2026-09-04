@@ -20,14 +20,14 @@ type Repository struct {
 }
 
 type RepositoryConfigAudit struct {
-	ID             int64
-	RepositoryID   string
-	ConfigVersion  int64
-	Action         string
-	Actor          string
-	PreviousConfig json.RawMessage
-	NewConfig      json.RawMessage
-	CreatedAt      time.Time
+	ID             int64           `json:"id"`
+	RepositoryID   string          `json:"repository_id"`
+	ConfigVersion  int64           `json:"config_version"`
+	Action         string          `json:"action"`
+	Actor          string          `json:"actor"`
+	PreviousConfig json.RawMessage `json:"previous_config"`
+	NewConfig      json.RawMessage `json:"new_config"`
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
 type InboxEvent struct {
