@@ -10,6 +10,12 @@ import (
 func validEvidence() Evidence {
 	var evidence Evidence
 	evidence.SourceSHA = strings.Repeat("d", 40)
+	evidence.WebLockSHA256 = strings.Repeat("e", 64)
+	evidence.ManifestSHA256 = strings.Repeat("f", 64)
+	evidence.Scanners = map[string]string{
+		"govulncheck": "v1.7.0",
+		"trivy":       "v0.70.0",
+	}
 	evidence.Gates = map[string]string{
 		"go_vulnerability":    "passed",
 		"frontend_dependency": "passed",
@@ -24,10 +30,11 @@ func validEvidence() Evidence {
 		Path   string `json:"path"`
 		SHA256 string `json:"sha256"`
 	})
+	imageHex := map[string]string{"control": "c", "worker": "d", "web": "e"}
 	for _, name := range requiredImages {
 		evidence.Images[name] = struct {
 			LocalID string `json:"local_id"`
-		}{LocalID: "sha256:" + strings.Repeat(name[:1], 64)}
+		}{LocalID: "sha256:" + strings.Repeat(imageHex[name], 64)}
 		evidence.SBOMs[name] = struct {
 			Path   string `json:"path"`
 			SHA256 string `json:"sha256"`
@@ -36,8 +43,9 @@ func validEvidence() Evidence {
 	return evidence
 }
 
-func TestParseEvidenceAcceptsExactGatedSource(t *testing.T) {
+func TestParseEvidenceAcceptsExactGatedSourceAndFingerprintsRawManifest(t *testing.T) {
 	evidence := validEvidence()
+	evidence.ManifestSHA256 = ""
 	raw, err := json.Marshal(evidence)
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +56,9 @@ func TestParseEvidenceAcceptsExactGatedSource(t *testing.T) {
 	}
 	if parsed.SourceSHA != evidence.SourceSHA {
 		t.Fatalf("source SHA = %s", parsed.SourceSHA)
+	}
+	if !isHexSHA(parsed.ManifestSHA256, 64) {
+		t.Fatalf("evidence fingerprint = %q", parsed.ManifestSHA256)
 	}
 }
 
@@ -63,6 +74,24 @@ func TestEvidenceRejectsMissingSecurityGate(t *testing.T) {
 	evidence.Gates["web_image"] = "failed"
 	if !errors.Is(evidence.Validate(evidence.SourceSHA), ErrInvalidRelease) {
 		t.Fatal("failed security gate must reject release")
+	}
+}
+
+func TestEvidenceRejectsMissingScannerMetadata(t *testing.T) {
+	evidence := validEvidence()
+	delete(evidence.Scanners, "trivy")
+	if !errors.Is(evidence.Validate(evidence.SourceSHA), ErrInvalidRelease) {
+		t.Fatal("missing scanner provenance must reject release")
+	}
+}
+
+func TestEvidenceRejectsInvalidLocalImageIdentity(t *testing.T) {
+	evidence := validEvidence()
+	image := evidence.Images["web"]
+	image.LocalID = "sha256:not-valid"
+	evidence.Images["web"] = image
+	if !errors.Is(evidence.Validate(evidence.SourceSHA), ErrInvalidRelease) {
+		t.Fatal("invalid local image identity must reject release")
 	}
 }
 
