@@ -17,6 +17,7 @@ func TestLoadRequiresDatabaseURL(t *testing.T) {
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
 	t.Setenv("SYNFACTORY_OPERATOR_TOKEN", "")
+	t.Setenv("SYNFACTORY_GITHUB_AUTH_MODE", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -33,8 +34,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.EventLeaseDuration != 30*time.Second || cfg.EventMaxAttempts != 5 {
 		t.Fatalf("unexpected event processor defaults: %+v", cfg)
 	}
-	if cfg.GitHubAPIURL != "https://api.github.com" {
-		t.Fatalf("unexpected github API URL: %s", cfg.GitHubAPIURL)
+	if cfg.GitHubAPIURL != "https://api.github.com" || cfg.GitHubAuthMode != "pat" {
+		t.Fatalf("unexpected github defaults: api=%s auth=%s", cfg.GitHubAPIURL, cfg.GitHubAuthMode)
 	}
 	if cfg.RepositoryRoot != "/var/lib/synfactory/repos" || cfg.WorkspaceRoot != "/var/lib/synfactory/workspaces" {
 		t.Fatalf("unexpected worker storage defaults: %+v", cfg)
@@ -59,5 +60,37 @@ func TestLoadOperatorToken(t *testing.T) {
 	}
 	if cfg.OperatorToken != "operator-secret" {
 		t.Fatalf("operator token was not loaded")
+	}
+}
+
+func TestLoadGitHubAppMode(t *testing.T) {
+	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
+	t.Setenv("SYNFACTORY_GITHUB_AUTH_MODE", "APP")
+	t.Setenv("SYNFACTORY_GITHUB_APP_ID", "12345")
+	t.Setenv("SYNFACTORY_GITHUB_APP_PRIVATE_KEY_FILE", "/run/secrets/github-app.pem")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GitHubAuthMode != "app" || cfg.GitHubAppID != 12345 || cfg.GitHubAppPrivateKeyFile != "/run/secrets/github-app.pem" {
+		t.Fatalf("unexpected github app config: %+v", cfg)
+	}
+}
+
+func TestLoadGitHubAppModeRequiresAppConfiguration(t *testing.T) {
+	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
+	t.Setenv("SYNFACTORY_GITHUB_AUTH_MODE", "app")
+	t.Setenv("SYNFACTORY_GITHUB_APP_ID", "")
+	t.Setenv("SYNFACTORY_GITHUB_APP_PRIVATE_KEY_FILE", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want missing GitHub App configuration error")
+	}
+}
+
+func TestLoadRejectsMixedOrUnknownGitHubAuthMode(t *testing.T) {
+	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
+	t.Setenv("SYNFACTORY_GITHUB_AUTH_MODE", "auto")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want unsupported auth mode error")
 	}
 }
