@@ -72,6 +72,17 @@ func TestDockerRegistryClassifiesTransientFailure(t *testing.T) {
 	}
 }
 
+func TestDockerRegistryClassifiesDNSOutageAsTransient(t *testing.T) {
+	runner := &fakeCommandRunner{
+		outputs: [][]byte{nil, []byte("dial tcp: lookup registry.example: no such host")},
+		errs:    []error{nil, errors.New("exit status 1")},
+	}
+	_, err := (DockerRegistry{Runner: runner}).Push(context.Background(), "registry.example/repo", "v1", "local:image")
+	if !errors.Is(err, ErrRegistryTransient) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestPublishInputFromEvidenceUsesRetainedImageAndSBOMIdentity(t *testing.T) {
 	evidence := validEvidence()
 	input, err := PublishInputFromEvidence("v1.0.0", evidence.SourceSHA, "registry.example/synfactory/", evidence)
