@@ -67,12 +67,15 @@ func runPublish(args []string) error {
 		return err
 	}
 	if alreadyRecorded {
-		fmt.Fprintln(os.Stderr, "release already recorded; registry publish skipped")
+		fmt.Fprintln(os.Stderr, "release already recorded; build and registry publish skipped")
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+	if err := releasefactory.BuildAndVerifyEvidenceImages(ctx, evidence, nil); err != nil {
+		return err
+	}
 	manifest, err := (releasefactory.Publisher{
 		Registry: releasefactory.DockerRegistry{},
 		Attempts: *attempts,
