@@ -35,21 +35,21 @@ const (
 )
 
 type Item struct {
-	ID            string     `json:"id"`
-	DedupeKey     string     `json:"dedupe_key"`
-	RepositoryID  string     `json:"repository_id,omitempty"`
-	WorkflowID    string     `json:"workflow_id,omitempty"`
-	Kind          Kind       `json:"kind"`
-	Severity      Severity   `json:"severity"`
-	State         State      `json:"state"`
-	Title         string     `json:"title"`
-	Summary       string     `json:"summary"`
-	AssignedTo    string     `json:"assigned_to,omitempty"`
-	SnoozedUntil  *time.Time `json:"snoozed_until,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID             string     `json:"id"`
+	DedupeKey      string     `json:"dedupe_key"`
+	RepositoryID   string     `json:"repository_id,omitempty"`
+	WorkflowID     string     `json:"workflow_id,omitempty"`
+	Kind           Kind       `json:"kind"`
+	Severity       Severity   `json:"severity"`
+	State          State      `json:"state"`
+	Title          string     `json:"title"`
+	Summary        string     `json:"summary"`
+	AssignedTo     string     `json:"assigned_to,omitempty"`
+	SnoozedUntil   *time.Time `json:"snoozed_until,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
-	ResolvedAt    *time.Time `json:"resolved_at,omitempty"`
+	ResolvedAt     *time.Time `json:"resolved_at,omitempty"`
 }
 
 func DedupeKey(repositoryID, workflowID string, kind Kind, subject string) (string, error) {
