@@ -102,13 +102,37 @@ func (s *Store) MutateRepository(ctx context.Context, repository Repository, act
 	}
 	defer tx.Rollback()
 
-	var previous json.RawMessage
-	err = tx.QueryRowContext(ctx, `SELECT config FROM repositories WHERE provider = $1 AND full_name = $2 FOR UPDATE`, repository.Provider, repository.FullName).Scan(&previous)
+	lockKey := repository.Provider + ":" + repository.FullName
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+		return Repository{}, fmt.Errorf("lock repository identity: %w", err)
+	}
+
+	var existing Repository
+	err = tx.QueryRowContext(ctx, `
+SELECT id, provider, full_name, default_branch, enabled, config, config_version, created_at, updated_at
+FROM repositories
+WHERE provider = $1 AND full_name = $2
+FOR UPDATE`, repository.Provider, repository.FullName).Scan(
+		&existing.ID, &existing.Provider, &existing.FullName, &existing.DefaultBranch, &existing.Enabled,
+		&existing.Config, &existing.ConfigVersion, &existing.CreatedAt, &existing.UpdatedAt,
+	)
 	if err != nil && err != sql.ErrNoRows {
 		return Repository{}, fmt.Errorf("lock repository: %w", err)
 	}
-	if err == sql.ErrNoRows {
-		previous = json.RawMessage(`{}`)
+
+	if err == nil && action == "register" &&
+		existing.DefaultBranch == repository.DefaultBranch &&
+		existing.Enabled == repository.Enabled &&
+		string(jsonOrEmpty(existing.Config)) == string(jsonOrEmpty(repository.Config)) {
+		if err := tx.Commit(); err != nil {
+			return Repository{}, fmt.Errorf("commit idempotent repository registration: %w", err)
+		}
+		return existing, nil
+	}
+
+	previous := json.RawMessage(`{}`)
+	if err == nil {
+		previous = existing.Config
 	}
 
 	var saved Repository
