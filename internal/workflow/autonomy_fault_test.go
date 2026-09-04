@@ -60,7 +60,7 @@ func TestAutonomyFaultMatrixPreservesBoundedProgress(t *testing.T) {
 			wantState: StateBlocked, wantAction: ActionEscalateBlocker, wantRole: domain.RoleTeamLead, wantBlockedBy: "ci_repair_budget_exhausted",
 		},
 		{
-			name: "material dependency parks work without consuming developer capacity",
+			name:     "material dependency parks work without consuming developer capacity",
 			instance: base,
 			facts: Facts{
 				IssueOpen: true, IssueReady: true, HasImplementationPR: true,
