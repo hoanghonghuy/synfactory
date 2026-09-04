@@ -67,7 +67,7 @@ func runPublish(args []string) error {
 		return err
 	}
 	if alreadyRecorded {
-		fmt.Fprintln(os.Stderr, "release already recorded; build and registry publish skipped")
+		fmt.Fprintln(os.Stderr, "release already recorded; artifact load and registry publish skipped")
 		return nil
 	}
 
@@ -76,7 +76,7 @@ func runPublish(args []string) error {
 	if err := releasefactory.VerifyCheckoutSource(ctx, *sourceSHA, nil); err != nil {
 		return err
 	}
-	if err := releasefactory.BuildAndVerifyEvidenceImages(ctx, evidence, nil); err != nil {
+	if err := releasefactory.LoadAndVerifyEvidenceImages(ctx, evidence, filepath.Dir(*evidencePath), nil); err != nil {
 		return err
 	}
 	manifest, err := (releasefactory.Publisher{
