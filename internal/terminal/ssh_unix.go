@@ -28,13 +28,12 @@ func (SSHBackend) Start(ctx context.Context, target Target, size Size) (Process,
 	if target.Kind != TargetSSH {
 		return nil, fmt.Errorf("ssh terminal backend cannot start target kind %q", target.Kind)
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 	}
 
 	port := target.Port
@@ -57,9 +56,11 @@ func (SSHBackend) Start(ctx context.Context, target Target, size Size) (Process,
 	if command := remoteShellCommand(target); command != "" {
 		args = append(args, command)
 	}
-	cmd := exec.CommandContext(ctx, "ssh", args...)
+	// The request context only governs admission/startup. Once the PTY has been
+	// created, its lifetime belongs to the terminal Manager so the shell is not
+	// killed as soon as the HTTP create-session request finishes.
+	cmd := exec.Command("ssh", args...)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	ws := &pty.Winsize{Rows: normalizeDimension(size.Rows, 24), Cols: normalizeDimension(size.Cols, 80)}
 	ptmx, err := pty.StartWithSize(cmd, ws)
 	if err != nil {
