@@ -1,4 +1,17 @@
-import type { Evidence, Job, Overview, Page, Repository, Run, Worker, Workflow, WorkflowDetail } from './types'
+import type {
+  Evidence,
+  Job,
+  Overview,
+  Page,
+  Repository,
+  RepositoryConfig,
+  RepositoryConfigAudit,
+  RepositoryConfigInput,
+  Run,
+  Worker,
+  Workflow,
+  WorkflowDetail,
+} from './types'
 
 type WorkflowActionWire = {
   id: string
@@ -42,20 +55,23 @@ export class OperatorApiError extends Error {
 export class OperatorApi {
   constructor(private readonly token: string) {}
 
-  private async get<T>(path: string): Promise<T> {
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const headers = new Headers(init.headers)
+    headers.set('Authorization', `Bearer ${this.token}`)
+    headers.set('Accept', 'application/json')
+    if (init.body !== undefined) headers.set('Content-Type', 'application/json')
+
     const response = await fetch(path, {
-      method: 'GET',
+      ...init,
       cache: 'no-store',
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        Accept: 'application/json',
-      },
+      headers,
     })
     if (!response.ok) {
       let message = `request failed (${response.status})`
       try {
-        const body = (await response.json()) as { error?: string }
-        if (body.error) message = body.error
+        const body = (await response.json()) as { error?: string; message?: string }
+        if (body.message) message = body.message
+        else if (body.error) message = body.error
       } catch {
         // Keep the generic status message when the response is not JSON.
       }
@@ -64,12 +80,38 @@ export class OperatorApi {
     return (await response.json()) as T
   }
 
+  private get<T>(path: string): Promise<T> {
+    return this.request(path, { method: 'GET' })
+  }
+
   overview(): Promise<Overview> {
     return this.get('/api/v1/overview')
   }
 
   repositories(): Promise<{ items: Repository[] | null }> {
     return this.get('/api/v1/repositories')
+  }
+
+  repositoryConfigs(): Promise<{ items: RepositoryConfig[] | null }> {
+    return this.get('/api/v1/repository-config')
+  }
+
+  registerRepository(input: RepositoryConfigInput & { full_name: string }): Promise<RepositoryConfig> {
+    return this.request('/api/v1/repository-config', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
+  updateRepository(id: string, input: RepositoryConfigInput): Promise<RepositoryConfig> {
+    return this.request(`/api/v1/repository-config/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    })
+  }
+
+  repositoryAudit(id: string): Promise<{ items: RepositoryConfigAudit[] | null }> {
+    return this.get(`/api/v1/repository-config/${encodeURIComponent(id)}/audit`)
   }
 
   jobs(limit = 100): Promise<Page<Job>> {
