@@ -24,12 +24,15 @@ const (
 )
 
 type Target struct {
-	ID      string
-	Kind    TargetKind
-	WorkDir string
-	Shell   string
-	Host    string
-	User    string
+	ID             string     `json:"id"`
+	Kind           TargetKind `json:"kind"`
+	WorkDir        string     `json:"work_dir,omitempty"`
+	Shell          string     `json:"shell,omitempty"`
+	Host           string     `json:"host,omitempty"`
+	User           string     `json:"user,omitempty"`
+	Port           int        `json:"port,omitempty"`
+	IdentityFile   string     `json:"identity_file,omitempty"`
+	KnownHostsFile string     `json:"known_hosts_file,omitempty"`
 }
 
 type Size struct {
