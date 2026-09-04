@@ -35,6 +35,17 @@ type AppTokenSource struct {
 	expiresAt time.Time
 }
 
+type InstallationTokenError struct {
+	InstallationID int64
+	StatusCode     int
+	Permanent      bool
+	Message        string
+}
+
+func (e *InstallationTokenError) Error() string {
+	return fmt.Sprintf("github installation token request: installation=%d status=%d permanent=%t: %s", e.InstallationID, e.StatusCode, e.Permanent, e.Message)
+}
+
 func NewAppTokenSource(baseURL string, appID, installationID int64, privateKeyPEM []byte, httpClient *http.Client) (*AppTokenSource, error) {
 	key, err := parseRSAPrivateKey(privateKeyPEM)
 	if err != nil {
@@ -92,7 +103,12 @@ func (s *AppTokenSource) Token(ctx context.Context) (string, error) {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return "", fmt.Errorf("github installation token request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", &InstallationTokenError{
+			InstallationID: s.installationID,
+			StatusCode:     resp.StatusCode,
+			Permanent:      resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden,
+			Message:        sanitizeGitHubError(body),
+		}
 	}
 
 	var result struct {
