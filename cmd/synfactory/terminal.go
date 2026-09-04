@@ -42,7 +42,7 @@ func configureTerminal(cfg config.Config) (*configuredTerminal, error) {
 
 func (t *configuredTerminal) register(mux *http.ServeMux) {
 	if t != nil && t.handler != nil {
-		t.handler.Register(mux)
+		t.handler.RegisterSafe(mux)
 	}
 }
 
