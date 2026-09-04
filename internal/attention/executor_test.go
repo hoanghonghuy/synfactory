@@ -47,7 +47,7 @@ func (executorProvider) Name() string { return "webhook" }
 func (p executorProvider) Deliver(context.Context, Notification) error { return p.err }
 
 func validExecutorNotification() Notification {
-	return Notification{AttentionID: "att-1", Severity: SeverityHigh, Title: "Needs attention", Summary: "Repair budget exhausted"}
+	return Notification{AttentionID: "att-1", Severity: SeverityCritical, Title: "Needs attention", Summary: "Repair budget exhausted"}
 }
 
 func TestExecutorMarksSuccessfulDelivery(t *testing.T) {
