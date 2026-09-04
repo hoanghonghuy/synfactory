@@ -100,3 +100,76 @@ jobs:
 
       - name: Build web control center image
         run: docker build -t synfactory-web:ci ./web
+
+      - name: Scan control image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: synfactory-control:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: 'false'
+
+      - name: Scan worker image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: synfactory-worker:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: 'false'
+
+      - name: Scan web image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: synfactory-web:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: 'false'
+
+      - name: Generate control SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: synfactory-control:ci
+          scan-type: image
+          format: cyclonedx
+          output: release-evidence/control.cdx.json
+          exit-code: '0'
+
+      - name: Generate worker SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: synfactory-worker:ci
+          scan-type: image
+          format: cyclonedx
+          output: release-evidence/worker.cdx.json
+          exit-code: '0'
+
+      - name: Generate web SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: synfactory-web:ci
+          scan-type: image
+          format: cyclonedx
+          output: release-evidence/web.cdx.json
+          exit-code: '0'
+
+      - name: Record exact-head release manifest
+        run: |
+          mkdir -p release-evidence
+          jq -n \
+            --arg source_sha "$GITHUB_SHA" \
+            --arg control_image_id "$(docker image inspect synfactory-control:ci --format '{{.Id}}')" \
+            --arg worker_image_id "$(docker image inspect synfactory-worker:ci --format '{{.Id}}')" \
+            --arg web_image_id "$(docker image inspect synfactory-web:ci --format '{{.Id}}')" \
+            '{source_sha:$source_sha,images:{control:{local_id:$control_image_id},worker:{local_id:$worker_image_id},web:{local_id:$web_image_id}}}' \
+            > release-evidence/manifest.json
+
+      - name: Upload release evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-evidence-${{ github.sha }}
+          path: release-evidence/
+          if-no-files-found: error
+          retention-days: 30
