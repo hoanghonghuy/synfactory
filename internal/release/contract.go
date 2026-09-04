@@ -26,13 +26,17 @@ type Image struct {
 	Name       string `json:"name"`
 	Repository string `json:"repository"`
 	Digest     string `json:"digest"`
+	SBOMPath   string `json:"sbom_path"`
 	SBOMSHA256 string `json:"sbom_sha256"`
 }
 
 type Manifest struct {
-	Version   string  `json:"version"`
-	SourceSHA string  `json:"source_sha"`
-	Images    []Image `json:"images"`
+	Version        string            `json:"version"`
+	SourceSHA      string            `json:"source_sha"`
+	EvidenceSHA256 string            `json:"evidence_sha256"`
+	WebLockSHA256  string            `json:"web_lock_sha256,omitempty"`
+	Scanners       map[string]string `json:"scanners"`
+	Images         []Image           `json:"images"`
 }
 
 type Promotion struct {
@@ -47,6 +51,17 @@ func (m Manifest) Validate() error {
 	}
 	if !isHexSHA(m.SourceSHA, 40) {
 		return fmt.Errorf("%w: source_sha must be a 40-character git SHA", ErrInvalidRelease)
+	}
+	if !isHexSHA(m.EvidenceSHA256, 64) {
+		return fmt.Errorf("%w: evidence_sha256 must be 64 lowercase hex characters", ErrInvalidRelease)
+	}
+	if m.WebLockSHA256 != "" && !isHexSHA(m.WebLockSHA256, 64) {
+		return fmt.Errorf("%w: web_lock_sha256 must be 64 lowercase hex characters", ErrInvalidRelease)
+	}
+	for _, scanner := range requiredScanners {
+		if strings.TrimSpace(m.Scanners[scanner]) == "" {
+			return fmt.Errorf("%w: scanner metadata %s is required", ErrInvalidRelease, scanner)
+		}
 	}
 	if len(m.Images) != len(requiredImages) {
 		return fmt.Errorf("%w: release must contain control, worker and web images", ErrInvalidRelease)
@@ -63,8 +78,8 @@ func (m Manifest) Validate() error {
 		if !digestPattern.MatchString(image.Digest) {
 			return fmt.Errorf("%w: image %s digest must be immutable sha256", ErrInvalidRelease, image.Name)
 		}
-		if !isHexSHA(image.SBOMSHA256, 64) {
-			return fmt.Errorf("%w: image %s sbom_sha256 must be 64 lowercase hex characters", ErrInvalidRelease, image.Name)
+		if strings.TrimSpace(image.SBOMPath) == "" || !isHexSHA(image.SBOMSHA256, 64) {
+			return fmt.Errorf("%w: image %s must retain a valid SBOM path and sha256", ErrInvalidRelease, image.Name)
 		}
 	}
 	for _, name := range requiredImages {
@@ -81,10 +96,19 @@ func (m Manifest) ReleaseID() (string, error) {
 	}
 	images := append([]Image(nil), m.Images...)
 	sort.Slice(images, func(i, j int) bool { return images[i].Name < images[j].Name })
+	scannerNames := make([]string, 0, len(m.Scanners))
+	for scanner := range m.Scanners {
+		scannerNames = append(scannerNames, scanner)
+	}
+	sort.Strings(scannerNames)
+
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "version=%s\nsource=%s\n", m.Version, m.SourceSHA)
+	_, _ = fmt.Fprintf(h, "version=%s\nsource=%s\nevidence=%s\nweb_lock=%s\n", m.Version, m.SourceSHA, m.EvidenceSHA256, m.WebLockSHA256)
+	for _, scanner := range scannerNames {
+		_, _ = fmt.Fprintf(h, "scanner:%s=%s\n", scanner, m.Scanners[scanner])
+	}
 	for _, image := range images {
-		_, _ = fmt.Fprintf(h, "%s=%s@%s#%s\n", image.Name, image.Repository, image.Digest, image.SBOMSHA256)
+		_, _ = fmt.Fprintf(h, "%s=%s@%s#%s:%s\n", image.Name, image.Repository, image.Digest, image.SBOMPath, image.SBOMSHA256)
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
