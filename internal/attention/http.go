@@ -3,7 +3,6 @@ package attention
 import (
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -107,10 +106,10 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 func writeActionError(w http.ResponseWriter, err error) {
 	message := err.Error()
 	switch {
-	case strings.Contains(message, "required"), strings.Contains(message, "must be"):
-		writeError(w, http.StatusBadRequest, message)
 	case strings.Contains(message, "revalidate underlying blocker") || strings.Contains(message, "revalidator is required"):
 		writeError(w, http.StatusConflict, "underlying blocker could not be revalidated")
+	case strings.Contains(message, "required"), strings.Contains(message, "must be"):
+		writeError(w, http.StatusBadRequest, message)
 	default:
 		writeError(w, http.StatusInternalServerError, "attention_action_failed")
 	}
@@ -125,5 +124,3 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
 }
-
-var _ = errors.Is
