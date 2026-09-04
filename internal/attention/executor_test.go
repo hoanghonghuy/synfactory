@@ -44,7 +44,9 @@ func (s executorSource) NotificationForAttention(context.Context, string) (Notif
 type executorProvider struct{ err error }
 
 func (executorProvider) Name() string { return "webhook" }
-func (p executorProvider) Deliver(context.Context, Notification) error { return p.err }
+func (p executorProvider) Deliver(context.Context, Notification) error {
+	return p.err
+}
 
 func validExecutorNotification() Notification {
 	return Notification{AttentionID: "att-1", Severity: SeverityCritical, Title: "Needs attention", Summary: "Repair budget exhausted"}
