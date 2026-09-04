@@ -38,10 +38,23 @@
   }
 
   .table-wrap td {
-    padding: 5px 0;
+    display: grid;
+    grid-template-columns: minmax(82px, .35fr) minmax(0, 1fr);
+    gap: 10px;
+    align-items: baseline;
+    padding: 6px 0;
     border: 0;
     white-space: normal;
     overflow-wrap: anywhere;
+  }
+
+  .table-wrap td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
   }
 
   .table-wrap td:first-child {
@@ -57,6 +70,14 @@
   .table-wrap td.wide {
     max-width: none;
     min-width: 0;
+  }
+
+  .table-wrap td:has(.link-button) {
+    grid-template-columns: 1fr;
+  }
+
+  .table-wrap td:has(.link-button)::before {
+    display: none;
   }
 
   .table-wrap .link-button {
