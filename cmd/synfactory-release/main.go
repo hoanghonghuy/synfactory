@@ -108,6 +108,9 @@ func verifyExistingRelease(path string, input releasefactory.PublishInput) (bool
 	if existing.Version != input.Version || existing.SourceSHA != input.SourceSHA || existing.EvidenceSHA256 != input.Evidence.ManifestSHA256 || existing.WebLockSHA256 != input.Evidence.WebLockSHA256 {
 		return false, fmt.Errorf("%w: output path is already bound to another release identity", releasefactory.ErrIdentityConflict)
 	}
+	if len(existing.Scanners) != len(input.Evidence.Scanners) {
+		return false, fmt.Errorf("%w: recorded release scanner provenance set differs", releasefactory.ErrIdentityConflict)
+	}
 	for scanner, version := range input.Evidence.Scanners {
 		if existing.Scanners[scanner] != version {
 			return false, fmt.Errorf("%w: recorded release scanner provenance differs for %s", releasefactory.ErrIdentityConflict, scanner)
