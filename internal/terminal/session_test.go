@@ -129,3 +129,28 @@ func TestManagerReapsIdleAndLifetimeExpiredSessions(t *testing.T) {
 		t.Fatalf("expired process close count = %d, want 1", backend.processes[0].closed)
 	}
 }
+
+func TestManagerShutdownClosesAllSessionsAndReleasesCapacity(t *testing.T) {
+	backend := &fakeBackend{}
+	manager := NewManager(Config{Enabled: true, MaxSessions: 2, MaxSessionsPerTarget: 2}, []Target{{ID: "local", Kind: TargetLocal}}, map[TargetKind]Backend{TargetLocal: backend})
+	if _, err := manager.Open(context.Background(), "local", Size{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Open(context.Background(), "local", Size{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if len(manager.Active()) != 0 {
+		t.Fatalf("active sessions remain after shutdown: %+v", manager.Active())
+	}
+	for i, process := range backend.processes {
+		if process.closed != 1 {
+			t.Fatalf("process %d close count = %d, want 1", i, process.closed)
+		}
+	}
+	if _, err := manager.Open(context.Background(), "local", Size{}); err != nil {
+		t.Fatalf("capacity was not released after shutdown: %v", err)
+	}
+}
