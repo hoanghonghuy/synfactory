@@ -15,7 +15,9 @@ type Evidence struct {
 	Gates          map[string]string `json:"gates"`
 	ManifestSHA256 string            `json:"-"`
 	Images         map[string]struct {
-		LocalID string `json:"local_id"`
+		LocalID       string `json:"local_id"`
+		ArchivePath   string `json:"archive_path"`
+		ArchiveSHA256 string `json:"archive_sha256"`
 	} `json:"images"`
 	SBOMs map[string]struct {
 		Path   string `json:"path"`
@@ -71,8 +73,8 @@ func (e Evidence) Validate(expectedSourceSHA string) error {
 	}
 	for _, name := range requiredImages {
 		image, ok := e.Images[name]
-		if !ok || !digestPattern.MatchString(image.LocalID) {
-			return fmt.Errorf("%w: evidence missing valid immutable image identity for %s", ErrInvalidRelease, name)
+		if !ok || !digestPattern.MatchString(image.LocalID) || strings.TrimSpace(image.ArchivePath) == "" || !isHexSHA(image.ArchiveSHA256, 64) {
+			return fmt.Errorf("%w: evidence missing valid immutable image archive identity for %s", ErrInvalidRelease, name)
 		}
 		sbom, ok := e.SBOMs[name]
 		if !ok || strings.TrimSpace(sbom.Path) == "" || !isHexSHA(sbom.SHA256, 64) {
