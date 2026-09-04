@@ -168,41 +168,89 @@ func (c *Client) GetBranch(ctx context.Context, owner, repo, branch string) (Bra
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, target any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
-	if err != nil {
-		return fmt.Errorf("create github request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "SynFactory")
-	if c.tokenSource != nil {
-		token, err := c.tokenSource.Token(ctx)
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 		if err != nil {
-			return fmt.Errorf("resolve github token: %w", err)
+			return fmt.Errorf("create github request: %w", err)
 		}
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		req.Header.Set("User-Agent", "SynFactory")
+		if c.tokenSource != nil {
+			token, err := c.tokenForPath(ctx, path)
+			if err != nil {
+				return fmt.Errorf("resolve github token: %w", err)
+			}
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
 		}
-	}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("github request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		message := strings.TrimSpace(string(body))
-		if rateErr := c.rateLimitError(resp, message); rateErr != nil {
-			return rateErr
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("github request: %w", err)
 		}
-		return fmt.Errorf("github API %s: status=%d body=%s", path, resp.StatusCode, message)
+		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 && c.invalidateTokenForPath(path) {
+			_ = resp.Body.Close()
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			message := strings.TrimSpace(string(body))
+			if rateErr := c.rateLimitError(resp, message); rateErr != nil {
+				return rateErr
+			}
+			return fmt.Errorf("github API %s: status=%d body=%s", path, resp.StatusCode, message)
+		}
+		if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+			return fmt.Errorf("decode github response %s: %w", path, err)
+		}
+		return nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
-		return fmt.Errorf("decode github response %s: %w", path, err)
+	return fmt.Errorf("github API %s: authentication retry exhausted", path)
+}
+
+func (c *Client) tokenForPath(ctx context.Context, path string) (string, error) {
+	if source, ok := c.tokenSource.(RepositoryTokenSource); ok {
+		owner, repo, found := repositoryFromAPIPath(path)
+		if !found {
+			return "", fmt.Errorf("repository-scoped github credential cannot resolve path %q", path)
+		}
+		return source.TokenForRepository(ctx, owner, repo)
 	}
-	return nil
+	return c.tokenSource.Token(ctx)
+}
+
+func (c *Client) invalidateTokenForPath(path string) bool {
+	invalidator, ok := c.tokenSource.(RepositoryTokenInvalidator)
+	if !ok {
+		return false
+	}
+	owner, repo, found := repositoryFromAPIPath(path)
+	if !found {
+		return false
+	}
+	invalidator.InvalidateRepositoryToken(owner, repo)
+	return true
+}
+
+func repositoryFromAPIPath(path string) (string, string, bool) {
+	trimmed := strings.TrimPrefix(path, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) < 3 || parts[0] != "repos" {
+		return "", "", false
+	}
+	owner, err := url.PathUnescape(parts[1])
+	if err != nil || owner == "" {
+		return "", "", false
+	}
+	repo, err := url.PathUnescape(parts[2])
+	if err != nil || repo == "" {
+		return "", "", false
+	}
+	return owner, repo, true
 }
 
 func (c *Client) rateLimitError(resp *http.Response, message string) error {
