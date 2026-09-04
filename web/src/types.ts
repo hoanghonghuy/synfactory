@@ -4,6 +4,7 @@ export type OperationalStats = {
   failed_jobs: number
   stale_job_leases: number
   pending_events: number
+  failed_events?: number
   blocked_workflows: number
   parked_workflows: number
   live_workers: number
