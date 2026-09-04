@@ -132,7 +132,11 @@ func parseRSAPrivateKey(data []byte) (*rsa.PrivateKey, error) {
 
 func signAppJWT(key *rsa.PrivateKey, appID int64, now time.Time) (string, error) {
 	encode := base64.RawURLEncoding.EncodeToString
-	header := encode([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	headerJSON, err := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT"})
+	if err != nil {
+		return "", err
+	}
+	header := encode(headerJSON)
 	payload, err := json.Marshal(map[string]any{
 		"iat": now.Add(-60 * time.Second).Unix(),
 		"exp": now.Add(9 * time.Minute).Unix(),
