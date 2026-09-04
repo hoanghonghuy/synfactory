@@ -14,6 +14,7 @@ SynFactory is a self-hosted, always-on software factory: a Go control plane for 
 - **Deterministic authority boundaries.** Prompts describe role behavior; Go code owns permissions, WIP, verification, exact-head merge gates and issue lifecycle.
 - **Durable idempotency and leases.** Webhook/reconciliation duplicates, concurrent workers and restarts converge through PostgreSQL state.
 - **Self-host first.** Docker Compose on EC2/VPS is the initial operations target; workers can later move to separate hosts without changing domain contracts.
+- **Mobile-first operator experience.** Vue surfaces must work from narrow touch devices first and progressively enhance for desktop operations.
 
 ## Current architecture
 
@@ -95,7 +96,7 @@ curl -fsS http://127.0.0.1:8080/metrics
 
 For RDS/managed PostgreSQL, point `SYNFACTORY_DATABASE_URL` at the external service and start without `--profile local-db`.
 
-See **[`docs/operations.md`](docs/operations.md)** for CLI authentication, private-repository cloning, Caddy/webhook setup, Docker sandbox path requirements, backup/restore, upgrades and split-host deployment. See **[`docs/github-app-auth.md`](docs/github-app-auth.md)** for production GitHub App configuration and PAT migration.
+See **[`docs/operations.md`](docs/operations.md)** for CLI authentication, private-repository cloning, Caddy/webhook setup, Docker sandbox path requirements, backup/restore, upgrades and split-host deployment. See **[`docs/github-app-auth.md`](docs/github-app-auth.md)** for production GitHub App configuration and PAT migration. See **[`docs/roadmap.md`](docs/roadmap.md)** for the product maturity model, active P0 work and the long-term autonomy/human-control/cost/fleet/portfolio roadmap.
 
 ## Repository layout
 
@@ -117,7 +118,7 @@ internal/workspace/   worktree/Docker isolation
 migrations/           embedded PostgreSQL schema migrations
 config/               runtime configuration examples
 deploy/               reverse-proxy/deployment configuration
-docs/                 architecture, ADRs, research and operations
+docs/                 architecture, ADRs, research, operations and roadmap
 scripts/              preflight, backup/restore and helper tooling
 web/                  optional Vue 3 operator control center
 ```
@@ -161,8 +162,13 @@ SynFactory is a clean Go implementation that synthesizes proven ideas rather tha
 - Pluggable CLI/OpenAI runtime engine: **implemented**.
 - Worktree/Docker isolation + deterministic verification: **implemented**.
 - PM/TL/Dev/Reviewer/CI Guardian workflow engine: **implemented**.
-- 24/7 self-hosted operations/deployment: **implemented** (issue #7 completed).
-- Vue 3 authenticated operator control center: **implemented** (issue #8 completed).
+- 24/7 self-hosted operations/deployment: **implemented**.
+- Vue 3 authenticated operator control center baseline: **implemented**.
 - Managed repository onboarding/lifecycle: **implemented**.
 - Repository-scoped GitHub App authentication with explicit PAT fallback: **implemented**.
-- Launch-readiness/preflight hardening: **in progress on issue #26**.
+- Launch-readiness/preflight hardening: **implemented**.
+- Release vulnerability/SBOM/evidence gates: **implemented**.
+- Immutable OCI release publishing/promotion/rollback: **implemented**.
+- Secure EC2/SSH-style operator terminal: **in progress on issue #29**.
+- Mobile-first adaptive control center: **planned on issue #31**.
+- Production autonomy soak, multi-user control, cost governance, distributed worker fleet, secrets operations, portfolio planning and later intelligence/provider work: **tracked in `docs/roadmap.md`**.
