@@ -24,7 +24,9 @@ func validEvidence() Evidence {
 		"web_image":           "passed",
 	}
 	evidence.Images = make(map[string]struct {
-		LocalID string `json:"local_id"`
+		LocalID       string `json:"local_id"`
+		ArchivePath   string `json:"archive_path"`
+		ArchiveSHA256 string `json:"archive_sha256"`
 	})
 	evidence.SBOMs = make(map[string]struct {
 		Path   string `json:"path"`
@@ -33,8 +35,14 @@ func validEvidence() Evidence {
 	imageHex := map[string]string{"control": "c", "worker": "d", "web": "e"}
 	for _, name := range requiredImages {
 		evidence.Images[name] = struct {
-			LocalID string `json:"local_id"`
-		}{LocalID: "sha256:" + strings.Repeat(imageHex[name], 64)}
+			LocalID       string `json:"local_id"`
+			ArchivePath   string `json:"archive_path"`
+			ArchiveSHA256 string `json:"archive_sha256"`
+		}{
+			LocalID:       "sha256:" + strings.Repeat(imageHex[name], 64),
+			ArchivePath:   "images/" + name + ".tar",
+			ArchiveSHA256: strings.Repeat("b", 64),
+		}
 		evidence.SBOMs[name] = struct {
 			Path   string `json:"path"`
 			SHA256 string `json:"sha256"`
@@ -92,6 +100,16 @@ func TestEvidenceRejectsInvalidLocalImageIdentity(t *testing.T) {
 	evidence.Images["web"] = image
 	if !errors.Is(evidence.Validate(evidence.SourceSHA), ErrInvalidRelease) {
 		t.Fatal("invalid local image identity must reject release")
+	}
+}
+
+func TestEvidenceRejectsUnsafeArchivePath(t *testing.T) {
+	evidence := validEvidence()
+	image := evidence.Images["control"]
+	image.ArchivePath = "../control.tar"
+	evidence.Images["control"] = image
+	if !errors.Is(evidence.Validate(evidence.SourceSHA), ErrInvalidRelease) {
+		t.Fatal("path traversal in image archive must reject release")
 	}
 }
 
