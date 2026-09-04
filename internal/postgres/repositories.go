@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"reflect"
 )
 
 func (s *Store) UpsertRepository(ctx context.Context, repository Repository) (Repository, error) {
@@ -120,12 +121,12 @@ FOR UPDATE`, repository.Provider, repository.FullName).Scan(
 		return Repository{}, fmt.Errorf("lock repository: %w", err)
 	}
 
-	if err == nil && action == "register" &&
+	if err == nil &&
 		existing.DefaultBranch == repository.DefaultBranch &&
 		existing.Enabled == repository.Enabled &&
-		string(jsonOrEmpty(existing.Config)) == string(jsonOrEmpty(repository.Config)) {
+		jsonEquivalent(existing.Config, repository.Config) {
 		if err := tx.Commit(); err != nil {
-			return Repository{}, fmt.Errorf("commit idempotent repository registration: %w", err)
+			return Repository{}, fmt.Errorf("commit idempotent repository mutation: %w", err)
 		}
 		return existing, nil
 	}
@@ -162,6 +163,18 @@ VALUES ($1, $2, $3, $4, $5, $6)`, saved.ID, saved.ConfigVersion, action, actor, 
 		return Repository{}, fmt.Errorf("commit repository mutation: %w", err)
 	}
 	return saved, nil
+}
+
+func jsonEquivalent(left, right json.RawMessage) bool {
+	var leftValue any
+	if err := json.Unmarshal(jsonOrEmpty(left), &leftValue); err != nil {
+		return false
+	}
+	var rightValue any
+	if err := json.Unmarshal(jsonOrEmpty(right), &rightValue); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
 }
 
 func (s *Store) ListRepositoryConfigAudit(ctx context.Context, repositoryID string) ([]RepositoryConfigAudit, error) {
