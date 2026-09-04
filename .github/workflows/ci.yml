@@ -10,9 +10,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16
@@ -63,11 +68,13 @@ jobs:
         run: go test ./...
 
       - name: Go vulnerability scan
+        timeout-minutes: 10
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           "$(go env GOPATH)/bin/govulncheck" ./...
 
       - name: Verify reproducible web dependencies
+        timeout-minutes: 8
         run: |
           docker run --rm \
             -v "$PWD/web:/app" \
@@ -77,6 +84,7 @@ jobs:
           git diff --exit-code -- web/package-lock.json
 
       - name: Frontend dependency audit
+        timeout-minutes: 8
         run: |
           docker run --rm \
             -v "$PWD/web:/app" \
@@ -103,6 +111,7 @@ jobs:
         run: docker build -t synfactory-web:ci ./web
 
       - name: Scan control image
+        timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
@@ -113,6 +122,7 @@ jobs:
           ignore-unfixed: 'false'
 
       - name: Scan worker image
+        timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
@@ -123,6 +133,7 @@ jobs:
           ignore-unfixed: 'false'
 
       - name: Scan web image
+        timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
@@ -136,6 +147,7 @@ jobs:
         run: mkdir -p release-evidence
 
       - name: Generate control SBOM
+        timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: synfactory-control:ci
@@ -145,6 +157,7 @@ jobs:
           exit-code: '0'
 
       - name: Generate worker SBOM
+        timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: synfactory-worker:ci
@@ -154,6 +167,7 @@ jobs:
           exit-code: '0'
 
       - name: Generate web SBOM
+        timeout-minutes: 10
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: synfactory-web:ci
@@ -175,6 +189,7 @@ jobs:
             > release-evidence/manifest.json
 
       - name: Upload release evidence
+        timeout-minutes: 10
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-evidence-${{ github.event.pull_request.head.sha || github.sha }}
