@@ -2,7 +2,10 @@ module github.com/hoanghonghuy/synfactory
 
 go 1.27
 
-require github.com/jackc/pgx/v5 v5.10.0
+require (
+	github.com/creack/pty v1.1.24
+	github.com/jackc/pgx/v5 v5.10.0
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
