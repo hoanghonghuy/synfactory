@@ -8,12 +8,18 @@ import (
 
 func validManifest() Manifest {
 	return Manifest{
-		Version:   "v1.2.3",
-		SourceSHA: strings.Repeat("a", 40),
+		Version:        "v1.2.3",
+		SourceSHA:      strings.Repeat("a", 40),
+		EvidenceSHA256: strings.Repeat("d", 64),
+		WebLockSHA256:  strings.Repeat("e", 64),
+		Scanners: map[string]string{
+			"govulncheck": "v1.7.0",
+			"trivy":       "v0.70.0",
+		},
 		Images: []Image{
-			{Name: "control", Repository: "registry.example/synfactory/control", Digest: "sha256:" + strings.Repeat("1", 64), SBOMSHA256: strings.Repeat("a", 64)},
-			{Name: "worker", Repository: "registry.example/synfactory/worker", Digest: "sha256:" + strings.Repeat("2", 64), SBOMSHA256: strings.Repeat("b", 64)},
-			{Name: "web", Repository: "registry.example/synfactory/web", Digest: "sha256:" + strings.Repeat("3", 64), SBOMSHA256: strings.Repeat("c", 64)},
+			{Name: "control", Repository: "registry.example/synfactory/control", Digest: "sha256:" + strings.Repeat("1", 64), SBOMPath: "control.cdx.json", SBOMSHA256: strings.Repeat("a", 64)},
+			{Name: "worker", Repository: "registry.example/synfactory/worker", Digest: "sha256:" + strings.Repeat("2", 64), SBOMPath: "worker.cdx.json", SBOMSHA256: strings.Repeat("b", 64)},
+			{Name: "web", Repository: "registry.example/synfactory/web", Digest: "sha256:" + strings.Repeat("3", 64), SBOMPath: "web.cdx.json", SBOMSHA256: strings.Repeat("c", 64)},
 		},
 	}
 }
@@ -48,6 +54,19 @@ func TestManifestRejectsMutableOrIncompleteImageIdentity(t *testing.T) {
 	}
 }
 
+func TestManifestRejectsIncompleteProvenance(t *testing.T) {
+	manifest := validManifest()
+	manifest.EvidenceSHA256 = ""
+	if !errors.Is(manifest.Validate(), ErrInvalidRelease) {
+		t.Fatal("release without evidence fingerprint must be rejected")
+	}
+	manifest = validManifest()
+	manifest.Images[0].SBOMPath = ""
+	if !errors.Is(manifest.Validate(), ErrInvalidRelease) {
+		t.Fatal("release without SBOM path must be rejected")
+	}
+}
+
 func TestEnsureIdempotentAllowsExactReplayAndRejectsVersionRebind(t *testing.T) {
 	existing := validManifest()
 	candidate := validManifest()
@@ -58,6 +77,15 @@ func TestEnsureIdempotentAllowsExactReplayAndRejectsVersionRebind(t *testing.T) 
 	candidate.Images[0].Digest = "sha256:" + strings.Repeat("f", 64)
 	if !errors.Is(EnsureIdempotent(existing, candidate), ErrIdentityConflict) {
 		t.Fatal("same version with different immutable content must conflict")
+	}
+}
+
+func TestReleaseIdentityIncludesEvidenceProvenance(t *testing.T) {
+	existing := validManifest()
+	candidate := validManifest()
+	candidate.EvidenceSHA256 = strings.Repeat("f", 64)
+	if !errors.Is(EnsureIdempotent(existing, candidate), ErrIdentityConflict) {
+		t.Fatal("different evidence fingerprint must change release identity")
 	}
 }
 
