@@ -68,13 +68,32 @@ jobs:
           "$(go env GOPATH)/bin/govulncheck" ./...
 
       - name: Validate operations scripts
-        run: bash -n scripts/backup.sh scripts/restore.sh
+        run: bash -n scripts/backup.sh scripts/restore.sh scripts/preflight.sh
 
       - name: Validate Compose
         run: |
           cp .env.example .env
           cp config/runtimes.example.json config/runtimes.local.json
           docker compose --profile local-db config >/dev/null
+
+      - name: Verify launch preflight
+        run: |
+          if bash scripts/preflight.sh .env.example; then
+            echo "example placeholders must not pass production preflight" >&2
+            exit 1
+          fi
+          cp .env.example "$RUNNER_TEMP/preflight.env"
+          sed -i \
+            -e 's/factory.example.com/factory.test/' \
+            -e 's/replace-with-a-long-random-password/test-database-password/g' \
+            -e 's/replace-with-fine-grained-pat-when-using-pat-mode/test-github-token/' \
+            -e 's/replace-with-webhook-secret/test-webhook-secret/' \
+            -e 's/replace-with-a-long-random-operator-token/test-operator-token/' \
+            -e "s|^SYNFACTORY_REPOSITORY_ROOT=.*|SYNFACTORY_REPOSITORY_ROOT=$RUNNER_TEMP/repos|" \
+            -e "s|^SYNFACTORY_WORKSPACE_ROOT=.*|SYNFACTORY_WORKSPACE_ROOT=$RUNNER_TEMP/workspaces|" \
+            "$RUNNER_TEMP/preflight.env"
+          mkdir -p "$RUNNER_TEMP/repos" "$RUNNER_TEMP/workspaces"
+          bash scripts/preflight.sh "$RUNNER_TEMP/preflight.env"
 
       - name: Build control image
         run: docker build --target control -t synfactory-control:ci .
