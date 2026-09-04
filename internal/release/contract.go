@@ -16,7 +16,7 @@ var (
 )
 
 var (
-	ErrInvalidRelease = errors.New("invalid release contract")
+	ErrInvalidRelease   = errors.New("invalid release contract")
 	ErrIdentityConflict = errors.New("release identity conflict")
 )
 
