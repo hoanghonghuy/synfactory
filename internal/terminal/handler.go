@@ -2,14 +2,13 @@ package terminal
 
 import (
 	"bufio"
-	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -19,8 +18,9 @@ import (
 )
 
 const (
-	streamTicketTTL = 30 * time.Second
-	maxWSFrame       = 64 << 10
+	streamTicketTTL      = 30 * time.Second
+	streamProtocolPrefix = "synfactory-terminal."
+	maxWSFrame           = 64 << 10
 )
 
 type Handler struct {
@@ -29,7 +29,6 @@ type Handler struct {
 
 	mu      sync.Mutex
 	tickets map[string]streamTicket
-	next    uint64
 	now     func() time.Time
 }
 
@@ -146,7 +145,12 @@ func (h *Handler) openSession(w http.ResponseWriter, r *http.Request) {
 		h.writeManagerError(w, err)
 		return
 	}
-	ticket := h.issueTicket(session.ID)
+	ticket, err := h.issueTicket(session.ID)
+	if err != nil {
+		_ = h.Manager.Close(session.ID)
+		writeTerminalJSON(w, http.StatusInternalServerError, map[string]string{"error": "unable to authorize terminal stream"})
+		return
+	}
 	writeTerminalJSON(w, http.StatusCreated, openResponse{Session: safeSessionFrom(*session), Ticket: ticket})
 }
 
@@ -179,15 +183,16 @@ func safeSessionFrom(session Session) safeSession {
 	return safeSession{ID: session.ID, TargetID: session.Target.ID, Kind: session.Target.Kind, OpenedAt: session.OpenedAt, LastIOAt: session.LastIOAt}
 }
 
-func (h *Handler) issueTicket(sessionID string) string {
+func (h *Handler) issueTicket(sessionID string) (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	ticket := base64.RawURLEncoding.EncodeToString(raw)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.next++
-	seed := fmt.Sprintf("%s:%d:%d", sessionID, h.next, h.now().UnixNano())
-	sum := sha1.Sum([]byte(seed))
-	ticket := base64.RawURLEncoding.EncodeToString(sum[:])
 	h.tickets[ticket] = streamTicket{SessionID: sessionID, ExpiresAt: h.now().Add(streamTicketTTL)}
-	return ticket
+	return ticket, nil
 }
 
 func (h *Handler) consumeTicket(ticket, sessionID string) bool {
@@ -217,27 +222,24 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if !h.consumeTicket(r.URL.Query().Get("ticket"), sessionID) {
+	protocol, ticket := streamProtocol(r.Header.Get("Sec-WebSocket-Protocol"))
+	if ticket == "" || !h.consumeTicket(ticket, sessionID) {
 		writeTerminalJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired stream ticket"})
 		return
 	}
-	conn, rw, err := upgradeWebSocket(w, r)
+	conn, rw, err := upgradeWebSocket(w, r, protocol)
 	if err != nil {
 		return
 	}
 	defer conn.Close()
-	defer h.Manager.Close(sessionID)
+	defer func() { _ = h.Manager.Close(sessionID) }()
 
 	session, err := h.Manager.Session(sessionID)
 	if err != nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
 	writeMu := &sync.Mutex{}
-	outputDone := make(chan struct{})
 	go func() {
-		defer close(outputDone)
 		buffer := make([]byte, 32<<10)
 		for {
 			n, readErr := session.Process.Read(buffer)
@@ -247,34 +249,28 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 				err := writeWSFrame(rw, 0x2, buffer[:n])
 				writeMu.Unlock()
 				if err != nil {
-					cancel()
+					_ = conn.Close()
 					return
 				}
 			}
 			if readErr != nil {
-				cancel()
+				_ = conn.Close()
 				return
 			}
 		}
 	}()
 
 	for {
-		select {
-		case <-ctx.Done():
-			<-outputDone
-			return
-		default:
-		}
 		opcode, payload, err := readWSFrame(rw.Reader)
 		if err != nil {
-			cancel()
-			<-outputDone
 			return
 		}
 		switch opcode {
 		case 0x2:
 			if len(payload) > 0 {
-				_, _ = session.Process.Write(payload)
+				if _, err := session.Process.Write(payload); err != nil {
+					return
+				}
 				_ = h.Manager.Touch(sessionID)
 			}
 		case 0x1:
@@ -284,24 +280,42 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 			}
 			switch message.Type {
 			case "input":
-				_, _ = session.Process.Write([]byte(message.Data))
+				if _, err := session.Process.Write([]byte(message.Data)); err != nil {
+					return
+				}
 				_ = h.Manager.Touch(sessionID)
 			case "resize":
-				_ = h.Manager.Resize(sessionID, Size{Rows: message.Rows, Cols: message.Cols})
+				if err := h.Manager.Resize(sessionID, Size{Rows: message.Rows, Cols: message.Cols}); err != nil {
+					return
+				}
 			}
 		case 0x8:
-			cancel()
-			<-outputDone
 			return
 		case 0x9:
 			writeMu.Lock()
-			_ = writeWSFrame(rw, 0xA, payload)
+			err := writeWSFrame(rw, 0xA, payload)
 			writeMu.Unlock()
+			if err != nil {
+				return
+			}
 		}
 	}
 }
 
-func upgradeWebSocket(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWriter, error) {
+func streamProtocol(value string) (string, string) {
+	for _, part := range strings.Split(value, ",") {
+		protocol := strings.TrimSpace(part)
+		if strings.HasPrefix(protocol, streamProtocolPrefix) {
+			ticket := strings.TrimPrefix(protocol, streamProtocolPrefix)
+			if ticket != "" {
+				return protocol, ticket
+			}
+		}
+	}
+	return "", ""
+}
+
+func upgradeWebSocket(w http.ResponseWriter, r *http.Request, protocol string) (net.Conn, *bufio.ReadWriter, error) {
 	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") || !headerContainsToken(r.Header.Get("Connection"), "upgrade") || r.Header.Get("Sec-WebSocket-Version") != "13" {
 		writeTerminalJSON(w, http.StatusBadRequest, map[string]string{"error": "websocket upgrade required"})
 		return nil, nil, errors.New("websocket upgrade required")
@@ -328,7 +342,12 @@ func upgradeWebSocket(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.
 	}
 	acceptSum := sha1.Sum([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 	accept := base64.StdEncoding.EncodeToString(acceptSum[:])
-	_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n")
+	response := "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n"
+	if protocol != "" {
+		response += "Sec-WebSocket-Protocol: " + protocol + "\r\n"
+	}
+	response += "\r\n"
+	_, _ = rw.WriteString(response)
 	if err := rw.Flush(); err != nil {
 		conn.Close()
 		return nil, nil, err
