@@ -105,12 +105,18 @@ func verifyExistingRelease(path string, input releasefactory.PublishInput) (bool
 	if err := existing.Validate(); err != nil {
 		return false, err
 	}
-	if existing.Version != input.Version || existing.SourceSHA != input.SourceSHA {
+	if existing.Version != input.Version || existing.SourceSHA != input.SourceSHA || existing.EvidenceSHA256 != input.Evidence.ManifestSHA256 || existing.WebLockSHA256 != input.Evidence.WebLockSHA256 {
 		return false, fmt.Errorf("%w: output path is already bound to another release identity", releasefactory.ErrIdentityConflict)
+	}
+	for scanner, version := range input.Evidence.Scanners {
+		if existing.Scanners[scanner] != version {
+			return false, fmt.Errorf("%w: recorded release scanner provenance differs for %s", releasefactory.ErrIdentityConflict, scanner)
+		}
 	}
 	for _, image := range existing.Images {
 		candidate, ok := input.Images[image.Name]
-		if !ok || candidate.Repository != image.Repository || candidate.SBOMSHA256 != image.SBOMSHA256 {
+		sbom := input.Evidence.SBOMs[image.Name]
+		if !ok || candidate.Repository != image.Repository || candidate.SBOMSHA256 != image.SBOMSHA256 || sbom.Path != image.SBOMPath {
 			return false, fmt.Errorf("%w: recorded release differs from selected evidence for %s", releasefactory.ErrIdentityConflict, image.Name)
 		}
 	}
