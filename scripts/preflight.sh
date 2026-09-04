@@ -104,7 +104,6 @@ elif command -v python3 >/dev/null 2>&1; then
 import json
 import os
 import pathlib
-import shutil
 import sys
 
 path, agent_bin, agent_home = sys.argv[1:]
@@ -133,14 +132,10 @@ search_dirs = [pathlib.Path(agent_bin), pathlib.Path(agent_home) / ".local" / "b
 def binary_available(binary):
     if not binary:
         return False
-    candidate = pathlib.Path(binary)
-    if candidate.is_absolute():
-        return candidate.is_file() and os.access(candidate, os.X_OK)
-    if "/" in binary:
+    name = pathlib.Path(binary).name
+    if not name:
         return False
-    if shutil.which(binary):
-        return True
-    return any((directory / binary).is_file() and os.access(directory / binary, os.X_OK) for directory in search_dirs)
+    return any((directory / name).is_file() and os.access(directory / name, os.X_OK) for directory in search_dirs)
 
 def secret_available(name):
     value = os.environ.get(name, "").strip()
