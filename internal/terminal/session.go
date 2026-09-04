@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -161,6 +162,16 @@ func (m *Manager) Touch(sessionID string) error {
 	return nil
 }
 
+func (m *Manager) Session(sessionID string) (Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.sessions[sessionID]
+	if !ok {
+		return Session{}, ErrSessionUnknown
+	}
+	return *session, nil
+}
+
 func (m *Manager) Resize(sessionID string, size Size) error {
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
@@ -234,5 +245,17 @@ func (m *Manager) Active() []Session {
 	for _, session := range m.sessions {
 		items = append(items, *session)
 	}
+	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
+	return items
+}
+
+func (m *Manager) Targets() []Target {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	items := make([]Target, 0, len(m.targets))
+	for _, target := range m.targets {
+		items = append(items, target)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
 	return items
 }
