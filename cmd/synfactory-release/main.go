@@ -42,13 +42,13 @@ func runPublish(args []string) error {
 	sourceSHA := fs.String("source-sha", "", "exact gated 40-character source SHA")
 	evidencePath := fs.String("evidence", "", "path to retained release-evidence manifest.json")
 	registryPrefix := fs.String("registry", "", "OCI repository prefix, for example ghcr.io/acme/synfactory")
-	outputPath := fs.String("output", "-", "release manifest path, or - for stdout")
+	outputPath := fs.String("output", "", "durable release manifest path")
 	attempts := fs.Int("attempts", 3, "maximum attempts for transient registry failures")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *version == "" || *sourceSHA == "" || *evidencePath == "" || *registryPrefix == "" {
-		return errors.New("publish requires --version, --source-sha, --evidence and --registry")
+	if *version == "" || *sourceSHA == "" || *evidencePath == "" || *registryPrefix == "" || *outputPath == "" || *outputPath == "-" {
+		return errors.New("publish requires --version, --source-sha, --evidence, --registry and a durable --output path")
 	}
 	raw, err := os.ReadFile(*evidencePath)
 	if err != nil {
@@ -62,6 +62,15 @@ func runPublish(args []string) error {
 	if err != nil {
 		return err
 	}
+	alreadyRecorded, err := verifyExistingRelease(*outputPath, input)
+	if err != nil {
+		return err
+	}
+	if alreadyRecorded {
+		fmt.Fprintln(os.Stderr, "release already recorded; registry publish skipped")
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	manifest, err := (releasefactory.Publisher{
@@ -72,20 +81,34 @@ func runPublish(args []string) error {
 	if err != nil {
 		return err
 	}
-	if *outputPath != "-" {
-		if existingRaw, readErr := os.ReadFile(*outputPath); readErr == nil {
-			var existing releasefactory.Manifest
-			if err := json.Unmarshal(existingRaw, &existing); err != nil {
-				return fmt.Errorf("decode existing release manifest: %w", err)
-			}
-			if err := releasefactory.EnsureIdempotent(existing, manifest); err != nil {
-				return err
-			}
-		} else if !errors.Is(readErr, os.ErrNotExist) {
-			return fmt.Errorf("read existing release manifest: %w", readErr)
+	return writeJSON(*outputPath, manifest)
+}
+
+func verifyExistingRelease(path string, input releasefactory.PublishInput) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read existing release manifest: %w", err)
+	}
+	var existing releasefactory.Manifest
+	if err := json.Unmarshal(raw, &existing); err != nil {
+		return false, fmt.Errorf("decode existing release manifest: %w", err)
+	}
+	if err := existing.Validate(); err != nil {
+		return false, err
+	}
+	if existing.Version != input.Version || existing.SourceSHA != input.SourceSHA {
+		return false, fmt.Errorf("%w: output path is already bound to another release identity", releasefactory.ErrIdentityConflict)
+	}
+	for _, image := range existing.Images {
+		candidate, ok := input.Images[image.Name]
+		if !ok || candidate.Repository != image.Repository || candidate.SBOMSHA256 != image.SBOMSHA256 {
+			return false, fmt.Errorf("%w: recorded release differs from selected evidence for %s", releasefactory.ErrIdentityConflict, image.Name)
 		}
 	}
-	return writeJSON(*outputPath, manifest)
+	return true, nil
 }
 
 func runPromotion(action string, args []string) error {
@@ -127,8 +150,11 @@ func writeJSON(path string, value any) error {
 		_, err = os.Stdout.Write(data)
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
-		return err
+	dir := filepath.Dir(path)
+	if dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
 	}
 	temporary := path + ".tmp"
 	if err := os.WriteFile(temporary, data, 0o644); err != nil {
