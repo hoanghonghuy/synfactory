@@ -184,11 +184,13 @@ jobs:
           ignore-unfixed: 'false'
 
       - name: Prepare release evidence directory
-        run: mkdir -p release-evidence/images
+        run: mkdir -p release-evidence
 
       - name: Export scanned release images
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
         timeout-minutes: 10
         run: |
+          mkdir -p release-evidence/images
           docker image save -o release-evidence/images/control.tar synfactory-control:ci
           docker image save -o release-evidence/images/worker.tar synfactory-worker:ci
           docker image save -o release-evidence/images/web.tar synfactory-web:ci
@@ -229,27 +231,58 @@ jobs:
       - name: Record exact-head release manifest
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RELEASE_READY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
         run: |
+          control_archive_path=""
+          worker_archive_path=""
+          web_archive_path=""
+          control_archive_sha256=""
+          worker_archive_sha256=""
+          web_archive_sha256=""
+          if [ "$RELEASE_READY" = "true" ]; then
+            control_archive_path="images/control.tar"
+            worker_archive_path="images/worker.tar"
+            web_archive_path="images/web.tar"
+            control_archive_sha256="$(sha256sum release-evidence/images/control.tar | awk '{print $1}')"
+            worker_archive_sha256="$(sha256sum release-evidence/images/worker.tar | awk '{print $1}')"
+            web_archive_sha256="$(sha256sum release-evidence/images/web.tar | awk '{print $1}')"
+          fi
           jq -n \
+            --argjson release_ready "$RELEASE_READY" \
             --arg source_sha "$SOURCE_SHA" \
             --arg web_lock_sha256 "$(sha256sum web/package-lock.json | awk '{print $1}')" \
             --arg control_image_id "$(docker image inspect synfactory-control:ci --format '{{.Id}}')" \
             --arg worker_image_id "$(docker image inspect synfactory-worker:ci --format '{{.Id}}')" \
             --arg web_image_id "$(docker image inspect synfactory-web:ci --format '{{.Id}}')" \
-            --arg control_archive_sha256 "$(sha256sum release-evidence/images/control.tar | awk '{print $1}')" \
-            --arg worker_archive_sha256 "$(sha256sum release-evidence/images/worker.tar | awk '{print $1}')" \
-            --arg web_archive_sha256 "$(sha256sum release-evidence/images/web.tar | awk '{print $1}')" \
+            --arg control_archive_path "$control_archive_path" \
+            --arg worker_archive_path "$worker_archive_path" \
+            --arg web_archive_path "$web_archive_path" \
+            --arg control_archive_sha256 "$control_archive_sha256" \
+            --arg worker_archive_sha256 "$worker_archive_sha256" \
+            --arg web_archive_sha256 "$web_archive_sha256" \
             --arg control_sbom_sha256 "$(sha256sum release-evidence/control.cdx.json | awk '{print $1}')" \
             --arg worker_sbom_sha256 "$(sha256sum release-evidence/worker.cdx.json | awk '{print $1}')" \
             --arg web_sbom_sha256 "$(sha256sum release-evidence/web.cdx.json | awk '{print $1}')" \
-            '{source_sha:$source_sha,web_lock_sha256:$web_lock_sha256,scanners:{govulncheck:"v1.7.0",trivy:"v0.70.0"},gates:{go_vulnerability:"passed",frontend_dependency:"passed",control_image:"passed",worker_image:"passed",web_image:"passed"},images:{control:{local_id:$control_image_id,archive_path:"images/control.tar",archive_sha256:$control_archive_sha256},worker:{local_id:$worker_image_id,archive_path:"images/worker.tar",archive_sha256:$worker_archive_sha256},web:{local_id:$web_image_id,archive_path:"images/web.tar",archive_sha256:$web_archive_sha256}},sboms:{control:{path:"control.cdx.json",sha256:$control_sbom_sha256},worker:{path:"worker.cdx.json",sha256:$worker_sbom_sha256},web:{path:"web.cdx.json",sha256:$web_sbom_sha256}}}' \
+            '{release_ready:$release_ready,source_sha:$source_sha,web_lock_sha256:$web_lock_sha256,scanners:{govulncheck:"v1.7.0",trivy:"v0.70.0"},gates:{go_vulnerability:"passed",frontend_dependency:"passed",control_image:"passed",worker_image:"passed",web_image:"passed"},images:{control:{local_id:$control_image_id,archive_path:$control_archive_path,archive_sha256:$control_archive_sha256},worker:{local_id:$worker_image_id,archive_path:$worker_archive_path,archive_sha256:$worker_archive_sha256},web:{local_id:$web_image_id,archive_path:$web_archive_path,archive_sha256:$web_archive_sha256}},sboms:{control:{path:"control.cdx.json",sha256:$control_sbom_sha256},worker:{path:"worker.cdx.json",sha256:$worker_sbom_sha256},web:{path:"web.cdx.json",sha256:$web_sbom_sha256}}}' \
             > release-evidence/manifest.json
 
-      - name: Upload release evidence
+      - name: Upload release evidence metadata
         timeout-minutes: 10
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-evidence-${{ github.event.pull_request.head.sha || github.sha }}
-          path: release-evidence/
+          path: |
+            release-evidence/
+            !release-evidence/images/**
           if-no-files-found: error
           retention-days: 30
+
+      - name: Upload release-ready image bundle
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        timeout-minutes: 10
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-bundle-${{ github.sha }}
+          path: release-evidence/
+          if-no-files-found: error
+          retention-days: 7
