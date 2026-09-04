@@ -99,6 +99,15 @@ jobs:
           chmod +x "$RUNNER_TEMP/agent-bin/codex"
           bash scripts/preflight.sh "$RUNNER_TEMP/preflight.env"
 
+          cp "$RUNNER_TEMP/preflight.env" "$RUNNER_TEMP/preflight-app.env"
+          printf '%s\n' 'test-private-key-material' > "$RUNNER_TEMP/github-app.pem"
+          sed -i \
+            -e 's/^SYNFACTORY_GITHUB_AUTH_MODE=pat$/SYNFACTORY_GITHUB_AUTH_MODE=app/' \
+            -e 's/^SYNFACTORY_GITHUB_APP_ID=$/SYNFACTORY_GITHUB_APP_ID=12345/' \
+            -e "s|^SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST=.*|SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST=$RUNNER_TEMP/github-app.pem|" \
+            "$RUNNER_TEMP/preflight-app.env"
+          bash scripts/preflight.sh "$RUNNER_TEMP/preflight-app.env"
+
       - name: Build control image
         run: docker build --target control -t synfactory-control:ci .
 
