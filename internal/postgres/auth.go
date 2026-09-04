@@ -18,14 +18,19 @@ func (s *Store) UpsertAuthUser(ctx context.Context, id, provider, providerSubjec
 	if id == "" || provider == "" || providerSubject == "" {
 		return fmt.Errorf("auth user id, provider and provider subject are required")
 	}
-	_, err := s.db.ExecContext(ctx, `
+	var canonicalID string
+	err := s.db.QueryRowContext(ctx, `
 INSERT INTO auth_users (id, provider, provider_subject, display_name)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (provider, provider_subject) DO UPDATE
 SET display_name = EXCLUDED.display_name,
-    updated_at = NOW()`, id, provider, providerSubject, strings.TrimSpace(displayName))
+    updated_at = NOW()
+RETURNING id`, id, provider, providerSubject, strings.TrimSpace(displayName)).Scan(&canonicalID)
 	if err != nil {
 		return fmt.Errorf("upsert auth user: %w", err)
+	}
+	if canonicalID != id {
+		return fmt.Errorf("external identity %s/%s is already bound to auth user %s", provider, providerSubject, canonicalID)
 	}
 	return nil
 }
