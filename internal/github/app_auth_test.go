@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -125,6 +126,68 @@ func TestAppTokenSourceCachesAndRefreshesBeforeExpiry(t *testing.T) {
 	}
 	if third != "token-2" || calls.Load() != 2 {
 		t.Fatalf("refresh result third=%q calls=%d", third, calls.Load())
+	}
+}
+
+func TestAppTokenSourceSerializesConcurrentRefresh(t *testing.T) {
+	key := mustRSAKey(t)
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	now := time.Date(2026, 9, 4, 6, 0, 0, 0, time.UTC)
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			close(started)
+		}
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"token":      "shared-token",
+			"expires_at": now.Add(time.Hour).Format(time.RFC3339),
+		})
+	}))
+	defer server.Close()
+
+	source, err := NewAppTokenSource(server.URL, 12345, 777, pemBytes, server.Client())
+	if err != nil {
+		t.Fatalf("NewAppTokenSource() error = %v", err)
+	}
+	source.now = func() time.Time { return now }
+
+	const callers = 8
+	results := make(chan string, callers)
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			defer wg.Done()
+			token, err := source.Token(context.Background())
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- token
+		}()
+	}
+	<-started
+	close(release)
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	for err := range errs {
+		t.Fatalf("Token() error = %v", err)
+	}
+	for token := range results {
+		if token != "shared-token" {
+			t.Fatalf("token = %q, want shared-token", token)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("installation token requests = %d, want 1", calls.Load())
 	}
 }
 
