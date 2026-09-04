@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,7 +91,12 @@ func TestAppTokenSourceCachesAndRefreshesBeforeExpiry(t *testing.T) {
 		}
 		n := calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"token":"token-%d","expires_at":%q}`, n, now.Add(time.Hour).Format(time.RFC3339))
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"token":      "token-" + string(rune('0'+n)),
+			"expires_at": now.Add(time.Hour).Format(time.RFC3339),
+		}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer server.Close()
 
