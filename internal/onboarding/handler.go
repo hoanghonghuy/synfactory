@@ -110,13 +110,15 @@ func (h Handler) create(w http.ResponseWriter, r *http.Request) {
 	if request.IntegrationBranch == "" {
 		request.IntegrationBranch = "develop"
 	}
-	if err := h.validateBranches(r.Context(), owner, repo, request.DefaultBranch, request.IntegrationBranch); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "github_validation_failed", err.Error())
-		return
-	}
 	enabled := true
 	if request.Enabled != nil {
 		enabled = *request.Enabled
+	}
+	if enabled {
+		if err := h.validateBranches(r.Context(), owner, repo, request.DefaultBranch, request.IntegrationBranch); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "github_validation_failed", err.Error())
+			return
+		}
 	}
 	config, _ := json.Marshal(repositoryConfig{IntegrationBranch: request.IntegrationBranch, WorkspacePolicy: request.WorkspacePolicy})
 	item, err := h.Store.MutateRepository(r.Context(), postgres.Repository{
