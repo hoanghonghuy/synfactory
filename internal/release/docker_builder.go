@@ -20,6 +20,24 @@ var releaseBuildSpecs = []buildSpec{
 	{name: "web", context: "./web", tag: "synfactory-web:release-candidate"},
 }
 
+func VerifyCheckoutSource(ctx context.Context, expectedSourceSHA string, runner CommandRunner) error {
+	if !isHexSHA(expectedSourceSHA, 40) {
+		return fmt.Errorf("%w: expected checkout source must be a 40-character git SHA", ErrInvalidRelease)
+	}
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+	output, err := runner.CombinedOutput(ctx, "git", "rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("%w: resolve checkout HEAD: %v", ErrInvalidRelease, err)
+	}
+	actual := strings.TrimSpace(string(output))
+	if actual != expectedSourceSHA {
+		return fmt.Errorf("%w: checkout HEAD %s does not match gated source %s", ErrInvalidRelease, actual, expectedSourceSHA)
+	}
+	return nil
+}
+
 func BuildAndVerifyEvidenceImages(ctx context.Context, evidence Evidence, runner CommandRunner) error {
 	if err := evidence.Validate(evidence.SourceSHA); err != nil {
 		return err
