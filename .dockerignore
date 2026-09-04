@@ -1,0 +1,14 @@
+# Root Dockerfile only builds the Go control/worker binary. Keep the context
+# allow-listed so local repositories, workspaces, backups, Git metadata, web
+# dependencies, secrets, and other operator data can never be transferred to
+# the Docker daemon by this build.
+**
+!Dockerfile
+!go.mod
+!go.sum
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!migrations/
+!migrations/**

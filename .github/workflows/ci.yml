@@ -68,13 +68,45 @@ jobs:
           "$(go env GOPATH)/bin/govulncheck" ./...
 
       - name: Validate operations scripts
-        run: bash -n scripts/backup.sh scripts/restore.sh
+        run: bash -n scripts/backup.sh scripts/restore.sh scripts/preflight.sh
 
       - name: Validate Compose
         run: |
           cp .env.example .env
           cp config/runtimes.example.json config/runtimes.local.json
           docker compose --profile local-db config >/dev/null
+
+      - name: Verify launch preflight
+        run: |
+          if bash scripts/preflight.sh .env.example; then
+            echo "example placeholders must not pass production preflight" >&2
+            exit 1
+          fi
+          cp .env.example "$RUNNER_TEMP/preflight.env"
+          sed -i \
+            -e 's/factory.example.com/factory.test/' \
+            -e 's/replace-with-a-long-random-password/test-database-password/g' \
+            -e 's/replace-with-fine-grained-pat-when-using-pat-mode/test-github-token/' \
+            -e 's/replace-with-webhook-secret/test-webhook-secret/' \
+            -e 's/replace-with-a-long-random-operator-token/test-operator-token/' \
+            -e "s|^SYNFACTORY_REPOSITORY_ROOT=.*|SYNFACTORY_REPOSITORY_ROOT=$RUNNER_TEMP/repos|" \
+            -e "s|^SYNFACTORY_WORKSPACE_ROOT=.*|SYNFACTORY_WORKSPACE_ROOT=$RUNNER_TEMP/workspaces|" \
+            -e "s|^SYNFACTORY_AGENT_BIN=.*|SYNFACTORY_AGENT_BIN=$RUNNER_TEMP/agent-bin|" \
+            -e "s|^SYNFACTORY_AGENT_HOME=.*|SYNFACTORY_AGENT_HOME=$RUNNER_TEMP/agent-home|" \
+            "$RUNNER_TEMP/preflight.env"
+          mkdir -p "$RUNNER_TEMP/repos" "$RUNNER_TEMP/workspaces" "$RUNNER_TEMP/agent-bin" "$RUNNER_TEMP/agent-home"
+          printf '#!/usr/bin/env sh\nexit 0\n' > "$RUNNER_TEMP/agent-bin/codex"
+          chmod +x "$RUNNER_TEMP/agent-bin/codex"
+          bash scripts/preflight.sh "$RUNNER_TEMP/preflight.env"
+
+          cp "$RUNNER_TEMP/preflight.env" "$RUNNER_TEMP/preflight-app.env"
+          printf '%s\n' 'test-private-key-material' > "$RUNNER_TEMP/github-app.pem"
+          sed -i \
+            -e 's/^SYNFACTORY_GITHUB_AUTH_MODE=pat$/SYNFACTORY_GITHUB_AUTH_MODE=app/' \
+            -e 's/^SYNFACTORY_GITHUB_APP_ID=$/SYNFACTORY_GITHUB_APP_ID=12345/' \
+            -e "s|^SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST=.*|SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST=$RUNNER_TEMP/github-app.pem|" \
+            "$RUNNER_TEMP/preflight-app.env"
+          bash scripts/preflight.sh "$RUNNER_TEMP/preflight-app.env"
 
       - name: Build control image
         run: docker build --target control -t synfactory-control:ci .
