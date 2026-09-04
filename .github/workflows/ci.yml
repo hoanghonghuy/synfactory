@@ -91,8 +91,12 @@ jobs:
             -e 's/replace-with-a-long-random-operator-token/test-operator-token/' \
             -e "s|^SYNFACTORY_REPOSITORY_ROOT=.*|SYNFACTORY_REPOSITORY_ROOT=$RUNNER_TEMP/repos|" \
             -e "s|^SYNFACTORY_WORKSPACE_ROOT=.*|SYNFACTORY_WORKSPACE_ROOT=$RUNNER_TEMP/workspaces|" \
+            -e "s|^SYNFACTORY_AGENT_BIN=.*|SYNFACTORY_AGENT_BIN=$RUNNER_TEMP/agent-bin|" \
+            -e "s|^SYNFACTORY_AGENT_HOME=.*|SYNFACTORY_AGENT_HOME=$RUNNER_TEMP/agent-home|" \
             "$RUNNER_TEMP/preflight.env"
-          mkdir -p "$RUNNER_TEMP/repos" "$RUNNER_TEMP/workspaces"
+          mkdir -p "$RUNNER_TEMP/repos" "$RUNNER_TEMP/workspaces" "$RUNNER_TEMP/agent-bin" "$RUNNER_TEMP/agent-home"
+          printf '#!/usr/bin/env sh\nexit 0\n' > "$RUNNER_TEMP/agent-bin/codex"
+          chmod +x "$RUNNER_TEMP/agent-bin/codex"
           bash scripts/preflight.sh "$RUNNER_TEMP/preflight.env"
 
       - name: Build control image
