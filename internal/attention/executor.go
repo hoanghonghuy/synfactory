@@ -8,10 +8,10 @@ import (
 )
 
 type DeliveryStore interface {
-	ListDueNotificationDeliveries(ctx context.Context, now time.Time, limit int) ([]DeliveryRecord, error)
+	ListDueNotificationDeliveries(ctx context.Context, now time.Time, limit int) ([]Delivery, error)
 	MarkNotificationDeliveryDelivered(ctx context.Context, attentionID, provider string, deliveredAt time.Time) error
-	MarkNotificationDeliveryRetry(ctx context.Context, attentionID, provider string, attempt int, nextAttemptAt time.Time, lastError string) error
-	MarkNotificationDeliveryFailed(ctx context.Context, attentionID, provider string, attempt int, failedAt time.Time, lastError string) error
+	MarkNotificationDeliveryRetry(ctx context.Context, attentionID, provider string, attempts int, nextAttemptAt time.Time, lastError string) error
+	MarkNotificationDeliveryFailed(ctx context.Context, attentionID, provider string, attempts int, failedAt time.Time, lastError string) error
 }
 
 type NotificationSource interface {
@@ -46,8 +46,7 @@ func (e Executor) RunOnce(ctx context.Context, limit int) (int, error) {
 	for _, record := range records {
 		provider := e.Providers[record.Provider]
 		if provider == nil {
-			err := e.fail(ctx, record, now, fmt.Errorf("notification provider %q unavailable", record.Provider))
-			errs = append(errs, err)
+			errs = append(errs, e.fail(ctx, record, now, fmt.Errorf("notification provider %q unavailable", record.Provider)))
 			processed++
 			continue
 		}
@@ -75,15 +74,15 @@ func (e Executor) RunOnce(ctx context.Context, limit int) (int, error) {
 	return processed, errors.Join(errs...)
 }
 
-func (e Executor) fail(ctx context.Context, record DeliveryRecord, now time.Time, cause error) error {
-	attempt := record.Attempt + 1
-	if delay, retry := e.Policy.Delay(attempt); retry {
-		if err := e.Store.MarkNotificationDeliveryRetry(ctx, record.AttentionID, record.Provider, attempt, now.Add(delay), cause.Error()); err != nil {
+func (e Executor) fail(ctx context.Context, record Delivery, now time.Time, cause error) error {
+	attempts := record.Attempts + 1
+	if delay, retry := e.Policy.Delay(attempts); retry {
+		if err := e.Store.MarkNotificationDeliveryRetry(ctx, record.AttentionID, record.Provider, attempts, now.Add(delay), cause.Error()); err != nil {
 			return fmt.Errorf("record notification retry after %v: %w", cause, err)
 		}
 		return nil
 	}
-	if err := e.Store.MarkNotificationDeliveryFailed(ctx, record.AttentionID, record.Provider, attempt, now, cause.Error()); err != nil {
+	if err := e.Store.MarkNotificationDeliveryFailed(ctx, record.AttentionID, record.Provider, attempts, now, cause.Error()); err != nil {
 		return fmt.Errorf("record terminal notification failure after %v: %w", cause, err)
 	}
 	return nil
