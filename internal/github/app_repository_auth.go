@@ -120,7 +120,24 @@ func (s *AppRepositoryTokenSource) TokenForRepository(ctx context.Context, owner
 		s.tokens[installationID] = source
 	}
 
-	return source.Token(ctx)
+	token, err := source.Token(ctx)
+	if err == nil {
+		return token, nil
+	}
+	var tokenErr *InstallationTokenError
+	if errors.As(err, &tokenErr) {
+		if tokenErr.Permanent {
+			delete(s.installations, key)
+			delete(s.tokens, installationID)
+		}
+		return "", &InstallationError{
+			Repository: owner + "/" + repo,
+			StatusCode: tokenErr.StatusCode,
+			Permanent:  tokenErr.Permanent,
+			Message:    tokenErr.Message,
+		}
+	}
+	return "", err
 }
 
 func (s *AppRepositoryTokenSource) InvalidateRepositoryToken(owner, repo string) {
