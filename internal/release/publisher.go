@@ -46,6 +46,9 @@ func (p Publisher) Publish(ctx context.Context, input PublishInput) (Manifest, e
 	if !versionPattern.MatchString(input.Version) {
 		return Manifest{}, fmt.Errorf("%w: version must be a safe immutable release label", ErrInvalidRelease)
 	}
+	if !isHexSHA(input.Evidence.ManifestSHA256, 64) {
+		return Manifest{}, fmt.Errorf("%w: publish requires a retained evidence fingerprint", ErrInvalidRelease)
+	}
 	attempts := p.Attempts
 	if attempts <= 0 {
 		attempts = 3
@@ -55,7 +58,13 @@ func (p Publisher) Publish(ctx context.Context, input PublishInput) (Manifest, e
 		backoff = time.Second
 	}
 
-	manifest := Manifest{Version: input.Version, SourceSHA: input.SourceSHA}
+	manifest := Manifest{
+		Version:        input.Version,
+		SourceSHA:      input.SourceSHA,
+		EvidenceSHA256: input.Evidence.ManifestSHA256,
+		WebLockSHA256:  input.Evidence.WebLockSHA256,
+		Scanners:       cloneStrings(input.Evidence.Scanners),
+	}
 	for _, name := range requiredImages {
 		candidate, ok := input.Images[name]
 		if !ok || candidate.Repository == "" || candidate.SourceImage == "" || !isHexSHA(candidate.SBOMSHA256, 64) {
@@ -67,13 +76,25 @@ func (p Publisher) Publish(ctx context.Context, input PublishInput) (Manifest, e
 			return Manifest{}, fmt.Errorf("publish %s: %w", name, err)
 		}
 		manifest.Images = append(manifest.Images, Image{
-			Name: name, Repository: candidate.Repository, Digest: digest, SBOMSHA256: candidate.SBOMSHA256,
+			Name:       name,
+			Repository: candidate.Repository,
+			Digest:     digest,
+			SBOMPath:   input.Evidence.SBOMs[name].Path,
+			SBOMSHA256: candidate.SBOMSHA256,
 		})
 	}
 	if err := manifest.Validate(); err != nil {
 		return Manifest{}, err
 	}
 	return manifest, nil
+}
+
+func cloneStrings(source map[string]string) map[string]string {
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func immutablePublishTag(version, sourceSHA, sourceImage string) string {
