@@ -1,0 +1,30 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+
+# Local/runtime state
+bin
+dist
+coverage.out
+*.test
+*.log
+data
+workspaces
+repos
+backups
+upstreams
+release-evidence
+
+# Local configuration and credentials
+config/runtimes.local.json
+config/runtimes.restored.json
+deploy/caddy/.env
+
+# Non-Go build inputs
+.idea
+.vscode
+docs
+scripts
+web
