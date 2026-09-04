@@ -77,20 +77,21 @@ jobs:
         timeout-minutes: 8
         run: |
           docker run --rm \
-            -v "$PWD/web:/app" \
+            -v "$PWD/web/package.json:/app/package.json:ro" \
+            -v "$PWD/web/package-lock.json:/app/package-lock.json:ro" \
             -w /app \
             node:24-alpine \
             sh -lc 'npm ci --ignore-scripts --no-audit --no-fund'
-          git diff --exit-code -- web/package-lock.json
 
       - name: Frontend dependency audit
         timeout-minutes: 8
         run: |
           docker run --rm \
-            -v "$PWD/web:/app" \
+            -v "$PWD/web/package.json:/app/package.json:ro" \
+            -v "$PWD/web/package-lock.json:/app/package-lock.json:ro" \
             -w /app \
             node:24-alpine \
-            sh -lc 'npm audit --audit-level=high --omit=dev'
+            sh -lc 'npm audit --package-lock-only --audit-level=high --omit=dev'
 
       - name: Validate operations scripts
         run: bash -n scripts/backup.sh scripts/restore.sh
