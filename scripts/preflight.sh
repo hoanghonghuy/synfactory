@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${1:-${SYNFACTORY_ENV_FILE:-$ROOT/.env}}"
 ERRORS=0
+GITHUB_AUTH_MODE="pat"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -54,7 +55,8 @@ for pair in \
   fi
 done
 
-case "${SYNFACTORY_GITHUB_AUTH_MODE:-pat}" in
+GITHUB_AUTH_MODE="${SYNFACTORY_GITHUB_AUTH_MODE:-pat}"
+case "$GITHUB_AUTH_MODE" in
   pat)
     if placeholder "${SYNFACTORY_GITHUB_TOKEN:-}"; then
       fail "SYNFACTORY_GITHUB_TOKEN is required and must not be a placeholder in pat mode"
@@ -64,9 +66,12 @@ case "${SYNFACTORY_GITHUB_AUTH_MODE:-pat}" in
     if [[ ! "${SYNFACTORY_GITHUB_APP_ID:-}" =~ ^[1-9][0-9]*$ ]]; then
       fail "SYNFACTORY_GITHUB_APP_ID must be a positive integer in app mode"
     fi
-    key_file="${SYNFACTORY_GITHUB_APP_PRIVATE_KEY_FILE:-}"
-    if [[ -z "$key_file" || ! -r "$key_file" ]]; then
-      fail "GitHub App private key file is not readable: ${key_file:-<unset>}"
+    key_host="$(resolve_host_path "${SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST:-}")"
+    if [[ -z "${SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST:-}" || ! -r "$key_host" ]]; then
+      fail "GitHub App host private key is not readable: ${SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST:-<unset>}"
+    fi
+    if [[ "${SYNFACTORY_GITHUB_APP_PRIVATE_KEY_FILE:-}" != "/run/secrets/synfactory-github-app.pem" ]]; then
+      fail "stock Compose App mode requires SYNFACTORY_GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/synfactory-github-app.pem"
     fi
     ;;
   *)
@@ -173,8 +178,12 @@ PY
 fi
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-  if ! docker compose --env-file "$ENV_FILE" -f "$ROOT/compose.yaml" --profile local-db config >/dev/null; then
-    fail "docker compose configuration is invalid"
+  compose_args=(--env-file "$ENV_FILE" -f "$ROOT/compose.yaml")
+  if [[ "$GITHUB_AUTH_MODE" == "app" ]]; then
+    compose_args+=(-f "$ROOT/compose.github-app.yaml")
+  fi
+  if ! docker compose "${compose_args[@]}" --profile local-db config >/dev/null; then
+    fail "docker compose configuration is invalid for GitHub auth mode $GITHUB_AUTH_MODE"
   fi
 fi
 
