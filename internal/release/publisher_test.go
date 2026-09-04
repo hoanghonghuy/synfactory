@@ -31,17 +31,17 @@ func validPublishInput() PublishInput {
 	input.Images = make(map[string]struct {
 		Repository  string
 		SourceImage string
-		SBOMSHA256 string
+		SBOMSHA256  string
 	})
 	for _, name := range requiredImages {
 		input.Images[name] = struct {
 			Repository  string
 			SourceImage string
-			SBOMSHA256 string
+			SBOMSHA256  string
 		}{
 			Repository:  "registry.example/synfactory/" + name,
 			SourceImage: "synfactory-" + name + ":ci",
-			SBOMSHA256: strings.Repeat("a", 64),
+			SBOMSHA256:  strings.Repeat("a", 64),
 		}
 	}
 	return input
