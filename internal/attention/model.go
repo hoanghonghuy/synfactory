@@ -75,3 +75,57 @@ func (i Item) Active(now time.Time) bool {
 	}
 	return true
 }
+
+func (i Item) Acknowledge(actor string, now time.Time) (Item, error) {
+	if i.State == StateResolved {
+		return Item{}, fmt.Errorf("resolved attention item cannot be acknowledged")
+	}
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return Item{}, fmt.Errorf("acknowledgement actor is required")
+	}
+	now = now.UTC()
+	i.State = StateAcknowledged
+	i.AssignedTo = actor
+	i.AcknowledgedAt = &now
+	i.SnoozedUntil = nil
+	i.UpdatedAt = now
+	return i, nil
+}
+
+func (i Item) Snooze(actor string, until, now time.Time) (Item, error) {
+	if i.State == StateResolved {
+		return Item{}, fmt.Errorf("resolved attention item cannot be snoozed")
+	}
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return Item{}, fmt.Errorf("snooze actor is required")
+	}
+	now = now.UTC()
+	until = until.UTC()
+	if !until.After(now) {
+		return Item{}, fmt.Errorf("snooze deadline must be in the future")
+	}
+	i.State = StateSnoozed
+	i.AssignedTo = actor
+	i.SnoozedUntil = &until
+	i.UpdatedAt = now
+	return i, nil
+}
+
+func (i Item) Resolve(actor string, now time.Time, underlyingResolved bool) (Item, error) {
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return Item{}, fmt.Errorf("resolution actor is required")
+	}
+	if !underlyingResolved {
+		return Item{}, fmt.Errorf("underlying blocker must be revalidated as resolved")
+	}
+	now = now.UTC()
+	i.State = StateResolved
+	i.AssignedTo = actor
+	i.ResolvedAt = &now
+	i.SnoozedUntil = nil
+	i.UpdatedAt = now
+	return i, nil
+}
