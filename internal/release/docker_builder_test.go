@@ -9,13 +9,16 @@ import (
 	"testing"
 )
 
-func TestVerifyCheckoutSourceMatchesExactHead(t *testing.T) {
+func TestVerifyCheckoutSourceMatchesExactCleanHead(t *testing.T) {
 	sha := strings.Repeat("a", 40)
-	runner := &fakeCommandRunner{outputs: [][]byte{[]byte(sha + "\n")}, errs: []error{nil}}
+	runner := &fakeCommandRunner{
+		outputs: [][]byte{[]byte(sha + "\n"), nil},
+		errs:    []error{nil, nil},
+	}
 	if err := VerifyCheckoutSource(context.Background(), sha, runner); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.calls) != 1 || strings.Join(runner.calls[0], " ") != "git rev-parse HEAD" {
+	if len(runner.calls) != 2 || strings.Join(runner.calls[0], " ") != "git rev-parse HEAD" || strings.Join(runner.calls[1], " ") != "git diff --name-only HEAD --" {
 		t.Fatalf("calls=%v", runner.calls)
 	}
 }
@@ -23,6 +26,18 @@ func TestVerifyCheckoutSourceMatchesExactHead(t *testing.T) {
 func TestVerifyCheckoutSourceRejectsDifferentHead(t *testing.T) {
 	runner := &fakeCommandRunner{outputs: [][]byte{[]byte(strings.Repeat("b", 40) + "\n")}, errs: []error{nil}}
 	err := VerifyCheckoutSource(context.Background(), strings.Repeat("a", 40), runner)
+	if !errors.Is(err, ErrInvalidRelease) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestVerifyCheckoutSourceRejectsTrackedModifications(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	runner := &fakeCommandRunner{
+		outputs: [][]byte{[]byte(sha + "\n"), []byte("cmd/synfactory-release/main.go\n")},
+		errs:    []error{nil, nil},
+	}
+	err := VerifyCheckoutSource(context.Background(), sha, runner)
 	if !errors.Is(err, ErrInvalidRelease) {
 		t.Fatalf("error=%v", err)
 	}
