@@ -2,6 +2,8 @@ package release
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -41,6 +43,9 @@ func (p Publisher) Publish(ctx context.Context, input PublishInput) (Manifest, e
 	if err := input.Evidence.Validate(input.SourceSHA); err != nil {
 		return Manifest{}, err
 	}
+	if !versionPattern.MatchString(input.Version) {
+		return Manifest{}, fmt.Errorf("%w: version must be a safe immutable release label", ErrInvalidRelease)
+	}
 	attempts := p.Attempts
 	if attempts <= 0 {
 		attempts = 3
@@ -56,7 +61,8 @@ func (p Publisher) Publish(ctx context.Context, input PublishInput) (Manifest, e
 		if !ok || candidate.Repository == "" || candidate.SourceImage == "" || !isHexSHA(candidate.SBOMSHA256, 64) {
 			return Manifest{}, fmt.Errorf("%w: invalid publish input for %s", ErrInvalidRelease, name)
 		}
-		digest, err := p.pushWithRetry(ctx, attempts, backoff, candidate.Repository, input.Version, candidate.SourceImage)
+		tag := immutablePublishTag(input.Version, input.SourceSHA, candidate.SourceImage)
+		digest, err := p.pushWithRetry(ctx, attempts, backoff, candidate.Repository, tag, candidate.SourceImage)
 		if err != nil {
 			return Manifest{}, fmt.Errorf("publish %s: %w", name, err)
 		}
@@ -68,6 +74,11 @@ func (p Publisher) Publish(ctx context.Context, input PublishInput) (Manifest, e
 		return Manifest{}, err
 	}
 	return manifest, nil
+}
+
+func immutablePublishTag(version, sourceSHA, sourceImage string) string {
+	h := sha256.Sum256([]byte(version + "\n" + sourceSHA + "\n" + sourceImage))
+	return "release-" + hex.EncodeToString(h[:16])
 }
 
 func (p Publisher) pushWithRetry(ctx context.Context, attempts int, backoff time.Duration, repository, tag, sourceImage string) (string, error) {
