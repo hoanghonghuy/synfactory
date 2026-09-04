@@ -23,6 +23,9 @@ func TestAuthSessionPersistsScopedGrantsRevocationAndAudit(t *testing.T) {
 	if err := store.UpsertAuthUser(ctx, userID, "github", "github-subject-1", "Alice"); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.UpsertAuthUser(ctx, "different-user-id", "github", "github-subject-1", "Alice renamed"); err == nil {
+		t.Fatal("same external identity must not silently rebind to a different SynFactory user id")
+	}
 	if err := store.ReplaceAuthGrants(ctx, userID,
 		[]authz.RoleGrant{{Role: authz.RoleOperator, RepositoryID: "repo-a"}},
 		[]authz.PermissionGrant{{Permission: authz.PermissionTerminalAccess, RepositoryID: "repo-a"}},
@@ -40,7 +43,7 @@ func TestAuthSessionPersistsScopedGrantsRevocationAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.Principal.Subject != userID || session.Principal.DisplayName != "Alice" {
+	if session.Principal.Subject != userID || session.Principal.DisplayName != "Alice renamed" {
 		t.Fatalf("unexpected principal: %+v", session.Principal)
 	}
 	if !session.Principal.Allowed(authz.PermissionRepositoryMutate, "repo-a") {
