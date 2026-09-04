@@ -1,0 +1,12 @@
+# Add this override when SYNFACTORY_GITHUB_AUTH_MODE=app:
+# docker compose -f compose.yaml -f compose.github-app.yaml --profile local-db up -d
+services:
+  api:
+    volumes:
+      - ${SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST:?set SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST}:/run/secrets/synfactory-github-app.pem:ro
+  scheduler:
+    volumes:
+      - ${SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST:?set SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST}:/run/secrets/synfactory-github-app.pem:ro
+  worker:
+    volumes:
+      - ${SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST:?set SYNFACTORY_GITHUB_APP_PRIVATE_KEY_HOST}:/run/secrets/synfactory-github-app.pem:ro
