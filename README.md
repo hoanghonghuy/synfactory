@@ -5,7 +5,7 @@ SynFactory is a self-hosted, always-on software factory: a Go control plane for 
 ## Core principles
 
 - **Go-native control plane.** API, scheduler, reconciler, dispatcher, workers, workflow state machines and runtime adapters are Go.
-- **Vue only for the optional web UI.** The dashboard is intentionally deferred until backend contracts are stable.
+- **Vue only for the optional web UI.** The dashboard is an operator surface; workflow authority remains in Go and headless operation remains supported.
 - **Hybrid triggers.** GitHub webhooks are the fast path; periodic reconciliation (default: hourly) is the recovery/correctness path.
 - **GitHub is product-work truth.** Issues, PRs, reviews, checks, branches and commits are projected into durable workflow state.
 - **Pluggable external agent runtimes.** Codex, Cursor, Antigravity, Claude Code, OpenCode and OpenAI-compatible endpoints sit behind one runtime interface.
@@ -79,8 +79,11 @@ cp .env.example .env
 cp config/runtimes.example.json config/runtimes.local.json
 chmod 600 .env config/runtimes.local.json
 
-# Edit .env first, especially DB password, GitHub credentials, domain,
-# and absolute repository/workspace paths.
+# Edit .env first: database password/URL, operator + webhook secrets,
+# GitHub auth mode/credentials, domain, and absolute repository/workspace paths.
+# Create the configured repository/workspace directories before launch.
+bash scripts/preflight.sh
+
 docker compose --profile local-db build
 docker compose --profile local-db up -d
 
@@ -88,9 +91,11 @@ curl -fsS http://127.0.0.1:8080/readyz
 curl -fsS http://127.0.0.1:8080/metrics
 ```
 
+`preflight.sh` rejects example placeholders, invalid GitHub auth configuration, missing/unwritable storage roots, invalid runtime configuration and invalid Compose configuration before a production launch. A host-local OpenAI-compatible service such as 9router must be addressed as `host.docker.internal` from the Compose worker, not `127.0.0.1`.
+
 For RDS/managed PostgreSQL, point `SYNFACTORY_DATABASE_URL` at the external service and start without `--profile local-db`.
 
-See **[`docs/operations.md`](docs/operations.md)** for CLI authentication, private-repository cloning, Caddy/webhook setup, Docker sandbox path requirements, backup/restore, upgrades and split-host deployment.
+See **[`docs/operations.md`](docs/operations.md)** for CLI authentication, private-repository cloning, Caddy/webhook setup, Docker sandbox path requirements, backup/restore, upgrades and split-host deployment. See **[`docs/github-app-auth.md`](docs/github-app-auth.md)** for production GitHub App configuration and PAT migration.
 
 ## Repository layout
 
@@ -113,8 +118,8 @@ migrations/           embedded PostgreSQL schema migrations
 config/               runtime configuration examples
 deploy/               reverse-proxy/deployment configuration
 docs/                 architecture, ADRs, research and operations
-scripts/              backup/restore and helper tooling
-web/                  optional Vue 3 dashboard (future)
+scripts/              preflight, backup/restore and helper tooling
+web/                  optional Vue 3 operator control center
 ```
 
 ## Runtime configuration
@@ -131,9 +136,10 @@ The API exposes:
 - `GET /readyz` — PostgreSQL readiness;
 - `GET /ops` — JSON queue/lease/workflow/worker state;
 - `GET /metrics` — Prometheus-format operational gauges;
-- `POST /webhooks/github` — signed GitHub webhook intake.
+- `POST /webhooks/github` — signed GitHub webhook intake;
+- versioned authenticated operator APIs used by the Vue control center and managed-repository lifecycle.
 
-Caddy publishes only webhook/health routes by default; operational endpoints remain on the host-only API port.
+Caddy publishes only webhook/health routes by default; operational/operator endpoints remain behind the private/authenticated deployment boundary.
 
 ## Backup and restore
 
@@ -155,5 +161,8 @@ SynFactory is a clean Go implementation that synthesizes proven ideas rather tha
 - Pluggable CLI/OpenAI runtime engine: **implemented**.
 - Worktree/Docker isolation + deterministic verification: **implemented**.
 - PM/TL/Dev/Reviewer/CI Guardian workflow engine: **implemented**.
-- 24/7 self-hosted operations/deployment: **in progress on issue #7**.
-- Vue 3 operator control center: **deferred to issue #8**.
+- 24/7 self-hosted operations/deployment: **implemented** (issue #7 completed).
+- Vue 3 authenticated operator control center: **implemented** (issue #8 completed).
+- Managed repository onboarding/lifecycle: **implemented**.
+- Repository-scoped GitHub App authentication with explicit PAT fallback: **implemented**.
+- Launch-readiness/preflight hardening: **in progress on issue #26**.
