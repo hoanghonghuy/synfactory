@@ -9,6 +9,7 @@ import (
 
 func validEvidence() Evidence {
 	var evidence Evidence
+	evidence.ReleaseReady = true
 	evidence.SourceSHA = strings.Repeat("d", 40)
 	evidence.WebLockSHA256 = strings.Repeat("e", 64)
 	evidence.ManifestSHA256 = strings.Repeat("f", 64)
@@ -67,6 +68,14 @@ func TestParseEvidenceAcceptsExactGatedSourceAndFingerprintsRawManifest(t *testi
 	}
 	if !isHexSHA(parsed.ManifestSHA256, 64) {
 		t.Fatalf("evidence fingerprint = %q", parsed.ManifestSHA256)
+	}
+}
+
+func TestEvidenceRejectsNonReleaseReadyPRArtifact(t *testing.T) {
+	evidence := validEvidence()
+	evidence.ReleaseReady = false
+	if !errors.Is(evidence.Validate(evidence.SourceSHA), ErrInvalidRelease) {
+		t.Fatal("PR-only evidence must not be publishable")
 	}
 }
 
