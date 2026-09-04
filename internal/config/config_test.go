@@ -18,6 +18,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
 	t.Setenv("SYNFACTORY_OPERATOR_TOKEN", "")
 	t.Setenv("SYNFACTORY_GITHUB_AUTH_MODE", "")
+	t.Setenv("SYNFACTORY_TERMINAL_ENABLED", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -49,6 +50,15 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.OperatorToken != "" {
 		t.Fatalf("operator API must be disabled by default")
 	}
+	if cfg.TerminalEnabled {
+		t.Fatal("operator terminal must be disabled by default")
+	}
+	if cfg.TerminalTargetsPath != "/etc/synfactory/terminal-targets.json" || cfg.TerminalMaxSessions != 2 || cfg.TerminalMaxPerTarget != 1 {
+		t.Fatalf("unexpected terminal defaults: %+v", cfg)
+	}
+	if cfg.TerminalIdleTimeout != 15*time.Minute || cfg.TerminalMaxLifetime != 2*time.Hour {
+		t.Fatalf("unexpected terminal timing defaults: %+v", cfg)
+	}
 }
 
 func TestLoadOperatorToken(t *testing.T) {
@@ -60,6 +70,36 @@ func TestLoadOperatorToken(t *testing.T) {
 	}
 	if cfg.OperatorToken != "operator-secret" {
 		t.Fatalf("operator token was not loaded")
+	}
+}
+
+func TestLoadTerminalConfiguration(t *testing.T) {
+	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
+	t.Setenv("SYNFACTORY_OPERATOR_TOKEN", "operator-secret")
+	t.Setenv("SYNFACTORY_TERMINAL_ENABLED", "true")
+	t.Setenv("SYNFACTORY_TERMINAL_TARGETS", "/run/synfactory/terminal-targets.json")
+	t.Setenv("SYNFACTORY_TERMINAL_MAX_SESSIONS", "4")
+	t.Setenv("SYNFACTORY_TERMINAL_MAX_PER_TARGET", "2")
+	t.Setenv("SYNFACTORY_TERMINAL_IDLE_TIMEOUT", "10m")
+	t.Setenv("SYNFACTORY_TERMINAL_MAX_LIFETIME", "90m")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.TerminalEnabled || cfg.TerminalTargetsPath != "/run/synfactory/terminal-targets.json" {
+		t.Fatalf("unexpected terminal config: %+v", cfg)
+	}
+	if cfg.TerminalMaxSessions != 4 || cfg.TerminalMaxPerTarget != 2 || cfg.TerminalIdleTimeout != 10*time.Minute || cfg.TerminalMaxLifetime != 90*time.Minute {
+		t.Fatalf("unexpected terminal policy: %+v", cfg)
+	}
+}
+
+func TestLoadTerminalRequiresOperatorAuth(t *testing.T) {
+	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
+	t.Setenv("SYNFACTORY_OPERATOR_TOKEN", "")
+	t.Setenv("SYNFACTORY_TERMINAL_ENABLED", "true")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want terminal/operator authentication configuration error")
 	}
 }
 
