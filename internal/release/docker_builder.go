@@ -2,23 +2,15 @@ package release
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 )
-
-type buildSpec struct {
-	name    string
-	target  string
-	context string
-	tag     string
-}
-
-var releaseBuildSpecs = []buildSpec{
-	{name: "control", target: "control", context: ".", tag: "synfactory-control:release-candidate"},
-	{name: "worker", target: "worker", context: ".", tag: "synfactory-worker:release-candidate"},
-	{name: "web", context: "./web", tag: "synfactory-web:release-candidate"},
-}
 
 func VerifyCheckoutSource(ctx context.Context, expectedSourceSHA string, runner CommandRunner) error {
 	if !isHexSHA(expectedSourceSHA, 40) {
@@ -38,35 +30,54 @@ func VerifyCheckoutSource(ctx context.Context, expectedSourceSHA string, runner 
 	return nil
 }
 
-func BuildAndVerifyEvidenceImages(ctx context.Context, evidence Evidence, runner CommandRunner) error {
+func LoadAndVerifyEvidenceImages(ctx context.Context, evidence Evidence, evidenceDir string, runner CommandRunner) error {
 	if err := evidence.Validate(evidence.SourceSHA); err != nil {
 		return err
+	}
+	if strings.TrimSpace(evidenceDir) == "" {
+		return fmt.Errorf("%w: evidence directory is required", ErrInvalidRelease)
 	}
 	if runner == nil {
 		runner = ExecRunner{}
 	}
-	for _, spec := range releaseBuildSpecs {
-		args := []string{"build"}
-		if spec.target != "" {
-			args = append(args, "--target", spec.target)
+	for _, name := range requiredImages {
+		image := evidence.Images[name]
+		archivePath := filepath.Join(evidenceDir, filepath.FromSlash(image.ArchivePath))
+		digest, err := fileSHA256(archivePath)
+		if err != nil {
+			return fmt.Errorf("%w: read %s image archive: %v", ErrInvalidRelease, name, err)
 		}
-		args = append(args, "-t", spec.tag, spec.context)
-		output, err := runner.CombinedOutput(ctx, "docker", args...)
+		if digest != image.ArchiveSHA256 {
+			return fmt.Errorf("%w: %s image archive sha256 mismatch", ErrInvalidRelease, name)
+		}
+		output, err := runner.CombinedOutput(ctx, "docker", "image", "load", "-i", archivePath)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
-			return fmt.Errorf("%w: build %s image failed: %v: %s", ErrInvalidRelease, spec.name, err, strings.TrimSpace(string(output)))
+			return fmt.Errorf("%w: load %s image archive: %v: %s", ErrInvalidRelease, name, err, strings.TrimSpace(string(output)))
 		}
-		output, err = runner.CombinedOutput(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", spec.tag)
+		output, err = runner.CombinedOutput(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", image.LocalID)
 		if err != nil {
-			return fmt.Errorf("%w: inspect %s image failed: %v", ErrInvalidRelease, spec.name, err)
+			return fmt.Errorf("%w: inspect loaded %s image: %v", ErrInvalidRelease, name, err)
 		}
-		builtID := strings.TrimSpace(string(output))
-		expectedID := evidence.Images[spec.name].LocalID
-		if builtID != expectedID {
-			return fmt.Errorf("%w: rebuilt %s image identity %s does not match gated evidence %s", ErrInvalidRelease, spec.name, builtID, expectedID)
+		loadedID := strings.TrimSpace(string(output))
+		if loadedID != image.LocalID {
+			return fmt.Errorf("%w: loaded %s image identity %s does not match gated evidence %s", ErrInvalidRelease, name, loadedID, image.LocalID)
 		}
 	}
 	return nil
+}
+
+func fileSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
