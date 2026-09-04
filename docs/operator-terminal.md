@@ -10,7 +10,7 @@ The default local target runs as the SynFactory service user, never as root. Rem
 
 The browser first creates a session through the authenticated REST API. The response contains a cryptographically random, one-time stream ticket valid for 30 seconds. Browser WebSocket attachment sends that ticket in the `Sec-WebSocket-Protocol` header as `synfactory-terminal.<ticket>` rather than placing the operator token or stream ticket in the URL, reducing credential exposure through normal URL/access logging. The ticket is bound to one session and consumed once.
 
-SynFactory currently keeps session state in memory and may expose only non-secret metadata needed for operation/capacity: session ID, target ID/kind and start/last-I/O timestamps. Raw terminal I/O is intentionally excluded from durable run/evidence storage.
+Active session state remains in memory. When terminal mode is enabled, SynFactory also appends secret-safe lifecycle metadata to `/var/lib/synfactory/terminal-audit/session-events.jsonl`: event type, session/operator identity, target ID/kind, start/end timestamps and close/failure reason. Raw terminal contents, typed commands and keystrokes are never fields in this audit format. SSH diagnostics are reduced to bounded classes such as host-key, authentication or network failure rather than persisting raw SSH output.
 
 ## Session/API contract
 
@@ -43,13 +43,15 @@ For Docker Compose, keep the normal stack unchanged while terminal mode is disab
 docker compose -f compose.yaml -f compose.terminal.yaml --profile local-db up -d --build
 ```
 
-The overlay mounts `${SYNFACTORY_TERMINAL_TARGETS_HOST}` read-only at `/etc/synfactory/terminal-targets.json` and `${SYNFACTORY_TERMINAL_SSH_DIR_HOST}` read-only under `/run/secrets/synfactory-terminal`. Ensure key/known-hosts files are readable by the non-root SynFactory control UID (`10001`) without making private keys broadly writable/readable. The terminal-capable control image includes `openssh-client`; the worker image inherits it.
+The overlay mounts `${SYNFACTORY_TERMINAL_TARGETS_HOST}` read-only at `/etc/synfactory/terminal-targets.json`, `${SYNFACTORY_TERMINAL_SSH_DIR_HOST}` read-only under `/run/secrets/synfactory-terminal`, and `${SYNFACTORY_TERMINAL_AUDIT_HOST}` read-write at `/var/lib/synfactory/terminal-audit`. Ensure key/known-hosts files are readable by the non-root SynFactory control UID (`10001`) without making private keys broadly writable/readable, and pre-create/chown the audit directory so UID `10001` can append its `0600` JSONL file. The terminal-capable control image includes `openssh-client`; the worker image inherits it.
 
 ## Web control center
 
-The Vue control center will use an xterm-compatible presentation layer and the authenticated WebSocket stream. Vue does not decide target authorization, shell identity, session limits or privilege level. It only requests and renders sessions authorized by Go.
+The Vue control center includes a terminal operator dock backed only by the authenticated Go terminal APIs. Vue does not decide target authorization, shell identity, session limits or privilege level. It only requests and renders sessions authorized by Go.
 
-The UI must follow the mobile-first layout contract in `docs/control-center-layout.md`: phone operation is first-class, session controls remain touch-safe, terminal space fits the dynamic visual viewport, and virtual-keyboard/orientation changes resize the PTY without losing the session.
+On phones the terminal takes the dynamic viewport, keeps connect/close/hide controls touch-sized and safe-area aware, focuses a hidden text input for the virtual keyboard, and propagates `ResizeObserver`, visual-viewport and orientation changes to PTY resize messages. On larger screens the same component becomes a bounded dock rather than a separate desktop application. Reconnect is an explicit new-session action; closing/disconnecting never creates a second orchestration path.
+
+The UI follows the mobile-first layout contract in `docs/control-center-layout.md`: phone operation is first-class, session controls remain touch-safe, terminal space fits the dynamic visual viewport, and virtual-keyboard/orientation changes resize the PTY without losing the session.
 
 ## Operational defaults
 
@@ -63,4 +65,4 @@ Recommended production defaults:
 - local shell working directory restricted to configured operator-safe roots;
 - no root shell and no insecure SSH host-key bypass.
 
-Configuration is explicit through `SYNFACTORY_TERMINAL_*`; disabling terminal mode opens no PTY and does not require terminal target/SSH mount files.
+Configuration is explicit through `SYNFACTORY_TERMINAL_*`; disabling terminal mode opens no PTY and does not require terminal target/SSH/audit mount files.
