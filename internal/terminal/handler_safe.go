@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // RegisterSafe exposes the terminal API using disconnect-safe WebSocket lifecycle.
