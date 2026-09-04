@@ -19,6 +19,35 @@ export type Repository = {
   updated_at: string
 }
 
+export type RepositoryConfig = {
+  id: string
+  provider: string
+  full_name: string
+  default_branch: string
+  integration_branch: string
+  workspace_policy?: string
+  enabled: boolean
+  config_version: number
+}
+
+export type RepositoryConfigInput = {
+  full_name?: string
+  default_branch?: string
+  integration_branch?: string
+  workspace_policy?: string
+  enabled?: boolean
+}
+
+export type RepositoryConfigAudit = {
+  id: number
+  repository_id: string
+  config_version: number
+  action: string
+  actor: string
+  config: unknown
+  created_at: string
+}
+
 export type Worker = {
   id: string
   host: string
