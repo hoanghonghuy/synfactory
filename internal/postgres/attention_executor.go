@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -22,7 +23,7 @@ WHERE attention_id = $3 AND provider = $4`,
 	if err != nil {
 		return fmt.Errorf("mark notification delivery delivered: %w", err)
 	}
-	return requireAffected(result, "notification delivery")
+	return ensureDeliveryAffected(result)
 }
 
 func (s *Store) MarkNotificationDeliveryRetry(ctx context.Context, attentionID, provider string, attempts int, nextAttemptAt time.Time, lastError string) error {
@@ -35,7 +36,7 @@ WHERE attention_id = $6 AND provider = $7`,
 	if err != nil {
 		return fmt.Errorf("mark notification delivery retry: %w", err)
 	}
-	return requireAffected(result, "notification delivery")
+	return ensureDeliveryAffected(result)
 }
 
 func (s *Store) MarkNotificationDeliveryFailed(ctx context.Context, attentionID, provider string, attempts int, failedAt time.Time, lastError string) error {
@@ -48,7 +49,7 @@ WHERE attention_id = $5 AND provider = $6`,
 	if err != nil {
 		return fmt.Errorf("mark notification delivery failed: %w", err)
 	}
-	return requireAffected(result, "notification delivery")
+	return ensureDeliveryAffected(result)
 }
 
 func (s *Store) NotificationForAttention(ctx context.Context, attentionID string) (attention.Notification, error) {
@@ -67,4 +68,15 @@ func (s *Store) NotificationForAttention(ctx context.Context, attentionID string
 			"workflow_id": item.WorkflowID,
 		},
 	}, nil
+}
+
+func ensureDeliveryAffected(result sql.Result) error {
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read notification delivery update count: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
