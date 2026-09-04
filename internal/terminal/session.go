@@ -63,6 +63,7 @@ type Config struct {
 
 type Session struct {
 	ID       string
+	Operator string
 	Target   Target
 	OpenedAt time.Time
 	LastIOAt time.Time
@@ -77,6 +78,7 @@ type Manager struct {
 	sessions map[string]*Session
 	nextID   uint64
 	now      func() time.Time
+	audit    AuditSink
 }
 
 func NewManager(cfg Config, targets []Target, backends map[TargetKind]Backend) *Manager {
@@ -107,18 +109,29 @@ func NewManager(cfg Config, targets []Target, backends map[TargetKind]Backend) *
 	}
 }
 
-func (m *Manager) Open(ctx context.Context, targetID string, size Size) (*Session, error) {
+func (m *Manager) SetAuditSink(sink AuditSink) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.audit = sink
+}
 
+func (m *Manager) Open(ctx context.Context, targetID string, size Size) (*Session, error) {
+	return m.OpenAs(ctx, "operator", targetID, size)
+}
+
+func (m *Manager) OpenAs(ctx context.Context, operator, targetID string, size Size) (*Session, error) {
+	m.mu.Lock()
 	if !m.cfg.Enabled {
+		m.mu.Unlock()
 		return nil, ErrDisabled
 	}
 	target, ok := m.targets[targetID]
 	if !ok {
+		m.mu.Unlock()
 		return nil, ErrTargetUnknown
 	}
 	if len(m.sessions) >= m.cfg.MaxSessions {
+		m.mu.Unlock()
 		return nil, ErrCapacity
 	}
 	var targetSessions int
@@ -128,26 +141,38 @@ func (m *Manager) Open(ctx context.Context, targetID string, size Size) (*Sessio
 		}
 	}
 	if targetSessions >= m.cfg.MaxSessionsPerTarget {
+		m.mu.Unlock()
 		return nil, ErrTargetCapacity
 	}
 	backend := m.backends[target.Kind]
 	if backend == nil {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("terminal backend %q unavailable", target.Kind)
 	}
 	process, err := backend.Start(ctx, target, size)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
 	now := m.now().UTC()
 	m.nextID++
 	session := &Session{
 		ID:       fmt.Sprintf("term-%d", m.nextID),
+		Operator: operator,
 		Target:   target,
 		OpenedAt: now,
 		LastIOAt: now,
 		Process:  process,
 	}
 	m.sessions[session.ID] = session
+	audit := m.audit
+	m.mu.Unlock()
+	if audit != nil {
+		if err := audit.Record(AuditEvent{Event: "opened", SessionID: session.ID, Operator: session.Operator, TargetID: target.ID, TargetKind: target.Kind, StartedAt: now}); err != nil {
+			_ = m.CloseWithReason(session.ID, "audit_open_failed")
+			return nil, fmt.Errorf("audit terminal session open: %w", err)
+		}
+	}
 	return session, nil
 }
 
@@ -186,36 +211,59 @@ func (m *Manager) Resize(sessionID string, size Size) error {
 }
 
 func (m *Manager) Close(sessionID string) error {
+	return m.CloseWithReason(sessionID, "explicit_close")
+}
+
+func (m *Manager) CloseWithReason(sessionID, reason string) error {
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
 	if ok {
 		delete(m.sessions, sessionID)
 	}
+	audit := m.audit
+	now := m.now().UTC()
 	m.mu.Unlock()
 	if !ok {
 		return ErrSessionUnknown
 	}
-	return session.Process.Close()
+	closeErr := session.Process.Close()
+	var auditErr error
+	if audit != nil {
+		auditErr = audit.Record(AuditEvent{Event: "closed", SessionID: session.ID, Operator: session.Operator, TargetID: session.Target.ID, TargetKind: session.Target.Kind, StartedAt: session.OpenedAt, EndedAt: &now, Reason: reason})
+	}
+	return errors.Join(closeErr, auditErr)
 }
 
 func (m *Manager) ReapExpired() []string {
 	now := m.now().UTC()
 	m.mu.Lock()
-	var expired []*Session
+	type expiredSession struct {
+		session *Session
+		reason  string
+	}
+	var expired []expiredSession
 	for id, session := range m.sessions {
 		idleExpired := now.Sub(session.LastIOAt) >= m.cfg.IdleTimeout
 		lifetimeExpired := now.Sub(session.OpenedAt) >= m.cfg.MaxLifetime
 		if idleExpired || lifetimeExpired {
-			expired = append(expired, session)
+			reason := "idle_timeout"
+			if lifetimeExpired {
+				reason = "max_lifetime"
+			}
+			expired = append(expired, expiredSession{session: session, reason: reason})
 			delete(m.sessions, id)
 		}
 	}
+	audit := m.audit
 	m.mu.Unlock()
 
 	ids := make([]string, 0, len(expired))
-	for _, session := range expired {
-		_ = session.Process.Close()
-		ids = append(ids, session.ID)
+	for _, item := range expired {
+		_ = item.session.Process.Close()
+		if audit != nil {
+			_ = audit.Record(AuditEvent{Event: "closed", SessionID: item.session.ID, Operator: item.session.Operator, TargetID: item.session.Target.ID, TargetKind: item.session.Target.Kind, StartedAt: item.session.OpenedAt, EndedAt: &now, Reason: item.reason})
+		}
+		ids = append(ids, item.session.ID)
 	}
 	return ids
 }
@@ -227,12 +275,19 @@ func (m *Manager) Shutdown() error {
 		closing = append(closing, session)
 		delete(m.sessions, id)
 	}
+	audit := m.audit
+	now := m.now().UTC()
 	m.mu.Unlock()
 
 	var errs []error
 	for _, session := range closing {
 		if err := session.Process.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close terminal session %s: %w", session.ID, err))
+		}
+		if audit != nil {
+			if err := audit.Record(AuditEvent{Event: "closed", SessionID: session.ID, Operator: session.Operator, TargetID: session.Target.ID, TargetKind: session.Target.Kind, StartedAt: session.OpenedAt, EndedAt: &now, Reason: "shutdown"}); err != nil {
+				errs = append(errs, fmt.Errorf("audit terminal session %s shutdown: %w", session.ID, err))
+			}
 		}
 	}
 	return errors.Join(errs...)
