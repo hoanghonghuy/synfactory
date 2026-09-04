@@ -17,6 +17,15 @@ import (
 
 type SSHBackend struct{}
 
+type SSHFailureClass string
+
+const (
+	SSHFailureUnknown SSHFailureClass = "unknown"
+	SSHFailureHostKey SSHFailureClass = "host_key"
+	SSHFailureAuth    SSHFailureClass = "authentication"
+	SSHFailureNetwork SSHFailureClass = "network"
+)
+
 type sshProcess struct {
 	ptyFile  *os.File
 	cmd      *exec.Cmd
@@ -67,6 +76,27 @@ func (SSHBackend) Start(ctx context.Context, target Target, size Size) (Process,
 		return nil, fmt.Errorf("start SSH terminal PTY: %w", err)
 	}
 	return &sshProcess{ptyFile: ptmx, cmd: cmd}, nil
+}
+
+func ClassifySSHFailure(message string) SSHFailureClass {
+	message = strings.ToLower(message)
+	switch {
+	case strings.Contains(message, "host key verification failed"),
+		strings.Contains(message, "remote host identification has changed"),
+		strings.Contains(message, "no host key is known"):
+		return SSHFailureHostKey
+	case strings.Contains(message, "permission denied"),
+		strings.Contains(message, "no supported authentication methods available"),
+		strings.Contains(message, "sign_and_send_pubkey"):
+		return SSHFailureAuth
+	case strings.Contains(message, "connection refused"),
+		strings.Contains(message, "connection timed out"),
+		strings.Contains(message, "no route to host"),
+		strings.Contains(message, "could not resolve hostname"):
+		return SSHFailureNetwork
+	default:
+		return SSHFailureUnknown
+	}
 }
 
 func remoteShellCommand(target Target) string {
