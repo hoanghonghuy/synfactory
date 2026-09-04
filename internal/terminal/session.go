@@ -209,6 +209,24 @@ func (m *Manager) ReapExpired() []string {
 	return ids
 }
 
+func (m *Manager) Shutdown() error {
+	m.mu.Lock()
+	closing := make([]*Session, 0, len(m.sessions))
+	for id, session := range m.sessions {
+		closing = append(closing, session)
+		delete(m.sessions, id)
+	}
+	m.mu.Unlock()
+
+	var errs []error
+	for _, session := range closing {
+		if err := session.Process.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close terminal session %s: %w", session.ID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (m *Manager) Active() []Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
