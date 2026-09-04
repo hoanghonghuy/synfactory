@@ -48,13 +48,31 @@ jobs:
           git diff --exit-code -- go.mod go.sum
 
       - name: Format check
+        id: format
         run: |
           unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then
             echo "Unformatted Go files:"
             echo "$unformatted"
+            mkdir -p .ci/gofmt
+            while IFS= read -r file; do
+              [ -n "$file" ] || continue
+              gofmt -w "$file"
+              mkdir -p ".ci/gofmt/$(dirname "$file")"
+              cp "$file" ".ci/gofmt/$file"
+            done <<< "$unformatted"
+            echo "gofmt diff:"
+            git diff -- $unformatted
             exit 1
           fi
+
+      - name: Upload gofmt output
+        if: failure() && steps.format.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gofmt-output
+          path: .ci/gofmt
+          if-no-files-found: error
 
       - name: Vet
         run: go vet ./...
