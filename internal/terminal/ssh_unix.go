@@ -88,7 +88,7 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func (p *sshProcess) Read(buffer []byte) (int, error) { return p.ptyFile.Read(buffer) }
+func (p *sshProcess) Read(buffer []byte) (int, error)  { return p.ptyFile.Read(buffer) }
 func (p *sshProcess) Write(buffer []byte) (int, error) { return p.ptyFile.Write(buffer) }
 func (p *sshProcess) Resize(size Size) error {
 	return pty.Setsize(p.ptyFile, &pty.Winsize{Rows: normalizeDimension(size.Rows, 24), Cols: normalizeDimension(size.Cols, 80)})
