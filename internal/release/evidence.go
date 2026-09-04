@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 )
 
@@ -73,13 +74,21 @@ func (e Evidence) Validate(expectedSourceSHA string) error {
 	}
 	for _, name := range requiredImages {
 		image, ok := e.Images[name]
-		if !ok || !digestPattern.MatchString(image.LocalID) || strings.TrimSpace(image.ArchivePath) == "" || !isHexSHA(image.ArchiveSHA256, 64) {
+		if !ok || !digestPattern.MatchString(image.LocalID) || !validEvidencePath(image.ArchivePath) || !isHexSHA(image.ArchiveSHA256, 64) {
 			return fmt.Errorf("%w: evidence missing valid immutable image archive identity for %s", ErrInvalidRelease, name)
 		}
 		sbom, ok := e.SBOMs[name]
-		if !ok || strings.TrimSpace(sbom.Path) == "" || !isHexSHA(sbom.SHA256, 64) {
+		if !ok || !validEvidencePath(sbom.Path) || !isHexSHA(sbom.SHA256, 64) {
 			return fmt.Errorf("%w: evidence missing valid SBOM linkage for %s", ErrInvalidRelease, name)
 		}
 	}
 	return nil
+}
+
+func validEvidencePath(value string) bool {
+	if value == "" || strings.Contains(value, `\`) || strings.HasPrefix(value, "/") {
+		return false
+	}
+	cleaned := path.Clean(value)
+	return cleaned == value && cleaned != "." && cleaned != ".." && !strings.HasPrefix(cleaned, "../")
 }
