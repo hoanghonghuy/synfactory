@@ -14,9 +14,9 @@ type fakeProcess struct {
 	resized []Size
 }
 
-func (p *fakeProcess) Read([]byte) (int, error)  { return 0, nil }
+func (p *fakeProcess) Read([]byte) (int, error)    { return 0, nil }
 func (p *fakeProcess) Write(b []byte) (int, error) { return len(b), nil }
-func (p *fakeProcess) Wait() error               { return nil }
+func (p *fakeProcess) Wait() error                 { return nil }
 func (p *fakeProcess) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
