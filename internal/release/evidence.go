@@ -10,6 +10,7 @@ import (
 )
 
 type Evidence struct {
+	ReleaseReady   bool              `json:"release_ready"`
 	SourceSHA      string            `json:"source_sha"`
 	WebLockSHA256  string            `json:"web_lock_sha256,omitempty"`
 	Scanners       map[string]string `json:"scanners"`
@@ -50,6 +51,9 @@ func ParseEvidence(raw []byte, expectedSourceSHA string) (Evidence, error) {
 }
 
 func (e Evidence) Validate(expectedSourceSHA string) error {
+	if !e.ReleaseReady {
+		return fmt.Errorf("%w: evidence is not a release-ready develop artifact", ErrInvalidRelease)
+	}
 	if !isHexSHA(e.SourceSHA, 40) {
 		return fmt.Errorf("%w: evidence source_sha must be a 40-character git SHA", ErrInvalidRelease)
 	}
