@@ -21,7 +21,9 @@ func (s *httpStore) UpsertAttention(_ context.Context, item Item) (Item, error) 
 
 type resolvedRevalidator bool
 
-func (r resolvedRevalidator) UnderlyingResolved(context.Context, Item) (bool, error) { return bool(r), nil }
+func (r resolvedRevalidator) UnderlyingResolved(context.Context, Item) (bool, error) {
+	return bool(r), nil
+}
 
 func TestHTTPHandlerRequiresOperatorAuthorization(t *testing.T) {
 	h := HTTPHandler{Service: Service{Store: &httpStore{}}, Token: "secret"}
