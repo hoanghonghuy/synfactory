@@ -71,11 +71,11 @@ func TestSessionAuthorizerRejectsExpiredAndRevokedSessionsDeterministically(t *t
 		session SessionRecord
 	}{
 		{
-			name: "expired",
+			name:    "expired",
 			session: SessionRecord{ID: "expired", Principal: Principal{Subject: "alice", Roles: []RoleGrant{{Role: RoleObserver}}}, ExpiresAt: now},
 		},
 		{
-			name: "revoked",
+			name:    "revoked",
 			session: SessionRecord{ID: "revoked", Principal: Principal{Subject: "alice", Roles: []RoleGrant{{Role: RoleObserver}}}, ExpiresAt: now.Add(time.Hour), RevokedAt: &revokedAt},
 		},
 	} {
