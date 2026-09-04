@@ -30,7 +30,7 @@ type PublishInput struct {
 	Images    map[string]struct {
 		Repository  string
 		SourceImage string
-		SBOMSHA256 string
+		SBOMSHA256  string
 	}
 }
 
