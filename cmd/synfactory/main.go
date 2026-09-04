@@ -157,9 +157,13 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	}
 	metrics := operations.Handler{Store: store, WorkerStaleAfter: cfg.WorkerStaleAfter}
 	operatorAPI := controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter}
+	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
+	if err != nil {
+		return fmt.Errorf("configure github client for api: %w", err)
+	}
 	var onboardingGitHub onboarding.GitHub
-	if strings.TrimSpace(cfg.GitHubToken) != "" {
-		onboardingGitHub = githubfactory.NewClient(cfg.GitHubAPIURL, cfg.GitHubToken, nil)
+	if githubEnabled {
+		onboardingGitHub = githubClient
 	}
 	repositoryAPI := onboarding.Handler{Store: store, GitHub: onboardingGitHub, Token: cfg.OperatorToken}
 	mux := http.NewServeMux()
@@ -233,8 +237,11 @@ func runScheduler(ctx context.Context, cfg config.Config, store *postgres.Store,
 			return runLeaseRecovery(ctx, store, cfg.LeaseRecoveryInterval)
 		}},
 	}
-	if cfg.GitHubToken != "" {
-		githubClient := githubfactory.NewClient(cfg.GitHubAPIURL, cfg.GitHubToken, nil)
+	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
+	if err != nil {
+		return fmt.Errorf("configure github client for scheduler: %w", err)
+	}
+	if githubEnabled {
 		reconciler := githubfactory.NewReconciler(githubClient, store, cfg.ReconcileInterval, bus.all)
 		engine := workflow.NewEngine(store, githubClient, workflow.Config{WIPLimits: workflow.WIPLimits{
 			domain.RolePM:         cfg.WorkflowPMWIP,
@@ -251,7 +258,7 @@ func runScheduler(ctx context.Context, cfg config.Config, store *postgres.Store,
 			namedComponent{name: "workflow coordinator", run: coordinator.Run},
 		)
 	} else {
-		slog.Warn("github reconciliation and workflow coordination disabled because SYNFACTORY_GITHUB_TOKEN is empty")
+		slog.Warn("github reconciliation and workflow coordination disabled because PAT auth mode has no token")
 	}
 	return runComponents(ctx, components, cfg.ShutdownTimeout)
 }
@@ -266,7 +273,13 @@ func runWorkers(ctx context.Context, cfg config.Config, store *postgres.Store) e
 	if err != nil {
 		return fmt.Errorf("build runtime registry: %w", err)
 	}
-	githubClient := githubfactory.NewClient(cfg.GitHubAPIURL, cfg.GitHubToken, nil)
+	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
+	if err != nil {
+		return fmt.Errorf("configure github client for worker: %w", err)
+	}
+	if !githubEnabled {
+		return errors.New("github authentication is required for worker governance")
+	}
 	governance := workflow.GovernanceEngine{
 		Next: registry,
 		Sink: orchestrator.NewGovernanceSink(store, githubClient, cfg.TaskReservationTTL),
