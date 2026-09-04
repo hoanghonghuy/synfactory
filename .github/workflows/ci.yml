@@ -83,15 +83,18 @@ jobs:
             node:24-alpine \
             sh -lc 'npm ci --ignore-scripts --no-audit --no-fund'
 
-      - name: Frontend dependency audit
-        timeout-minutes: 8
-        run: |
-          docker run --rm \
-            -v "$PWD/web/package.json:/app/package.json:ro" \
-            -v "$PWD/web/package-lock.json:/app/package-lock.json:ro" \
-            -w /app \
-            node:24-alpine \
-            sh -lc 'npm audit --package-lock-only --audit-level=high --omit=dev'
+      - name: Scan frontend dependencies
+        timeout-minutes: 10
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: web
+          scanners: vuln
+          vuln-type: library
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: 'false'
 
       - name: Validate operations scripts
         run: bash -n scripts/backup.sh scripts/restore.sh
