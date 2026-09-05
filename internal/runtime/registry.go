@@ -13,6 +13,7 @@ type Registry struct {
 	mu       sync.RWMutex
 	adapters map[string]Adapter
 	config   Config
+	budget   BudgetGate
 }
 
 func BuildRegistry(cfg Config, supervisor *Supervisor, httpClient *http.Client) (*Registry, error) {
@@ -36,6 +37,16 @@ func BuildRegistry(cfg Config, supervisor *Supervisor, httpClient *http.Client) 
 	return registry, nil
 }
 
+func (r *Registry) WithBudgetGate(gate BudgetGate) *Registry {
+	if r == nil {
+		return r
+	}
+	r.mu.Lock()
+	r.budget = gate
+	r.mu.Unlock()
+	return r
+}
+
 func (r *Registry) Adapter(name string) (Adapter, bool) {
 	if r == nil {
 		return nil, false
@@ -44,6 +55,15 @@ func (r *Registry) Adapter(name string) (Adapter, bool) {
 	defer r.mu.RUnlock()
 	adapter, ok := r.adapters[name]
 	return adapter, ok
+}
+
+func (r *Registry) budgetGate() BudgetGate {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.budget
 }
 
 func (r *Registry) Probe(ctx context.Context) map[string]error {
@@ -95,6 +115,26 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		attemptRequest := request
 		attemptRequest.Model = model
 		attemptRequest.RunID = scopedRunID(request.RunID, index+1)
+
+		if gate := r.budgetGate(); gate != nil {
+			decision, err := gate.Evaluate(ctx, budgetRequest(request, candidate.Runtime, model))
+			if err != nil {
+				return Result{}, attempts, Failure(FailureBudget, errors.Join(ErrBudgetPolicyUnavailable, err))
+			}
+			decision = normalizeBudgetDecision(decision)
+			switch decision.Outcome {
+			case BudgetContinue:
+			case BudgetFallback:
+				attempts = append(attempts, budgetAttempt(index+1, candidate.Runtime, model, ErrBudgetExhausted, decision.Reason))
+				continue
+			case BudgetPark:
+				attempt := budgetAttempt(index+1, candidate.Runtime, model, ErrBudgetExhausted, decision.Reason)
+				return attempt.Result, append(attempts, attempt), attempt.Err
+			case BudgetEscalate:
+				attempt := budgetAttempt(index+1, candidate.Runtime, model, ErrBudgetApprovalRequired, decision.Reason)
+				return attempt.Result, append(attempts, attempt), attempt.Err
+			}
+		}
 
 		attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Model: model}
 		if observer != nil {
@@ -163,6 +203,21 @@ func (r *Registry) Cancel(ctx context.Context, runtimeName, runID string, sequen
 		return ErrRuntimeUnavailable
 	}
 	return adapter.Cancel(ctx, scopedRunID(runID, sequence))
+}
+
+func budgetAttempt(sequence int, runtimeName, model string, base error, reason string) Attempt {
+	err := base
+	if strings.TrimSpace(reason) != "" {
+		err = fmt.Errorf("%w: %s", base, strings.TrimSpace(reason))
+	}
+	return Attempt{
+		Sequence:     sequence,
+		Runtime:      runtimeName,
+		Model:        model,
+		FailureClass: FailureBudget,
+		Result:       Result{Runtime: runtimeName, Model: model, Outcome: OutcomeUnavailable, ExitCode: -1},
+		Err:          Failure(FailureBudget, err),
+	}
 }
 
 func scopedRunID(runID string, sequence int) string {
