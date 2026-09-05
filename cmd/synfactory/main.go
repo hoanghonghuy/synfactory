@@ -259,6 +259,9 @@ func runScheduler(ctx context.Context, cfg config.Config, store *postgres.Store,
 			return runLeaseRecovery(ctx, store, cfg.LeaseRecoveryInterval)
 		}},
 	}
+	if delivery, enabled := configuredAttentionDelivery(store); enabled {
+		components = append(components, delivery)
+	}
 	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
 	if err != nil {
 		return fmt.Errorf("configure github client for scheduler: %w", err)
