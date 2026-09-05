@@ -162,7 +162,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 		Legacy:  authz.LegacyTokenAuthorizer{Token: cfg.OperatorToken},
 	}
 	operatorAPI := controlcenter.AuthorizedHandler{
-		Handler: controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter},
+		Handler:    controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter},
 		Authorizer: authorizer,
 	}
 	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
