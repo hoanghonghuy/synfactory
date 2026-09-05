@@ -16,17 +16,17 @@ const (
 )
 
 type RuntimeBudgetPolicy struct {
-	ID               string
-	Repository       string
-	Scope            string
-	ScopeKey         string
+	ID                string
+	Repository        string
+	Scope             string
+	ScopeKey          string
 	SoftLimitMicroUSD int64
 	HardLimitMicroUSD int64
-	SoftOutcome      string
-	Enabled          bool
-	CreatedBy        string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	SoftOutcome       string
+	Enabled           bool
+	CreatedBy         string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type RuntimeBudgetOverrideAudit struct {
