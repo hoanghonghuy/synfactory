@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hoanghonghuy/synfactory/internal/attention"
 	"github.com/hoanghonghuy/synfactory/internal/config"
 	"github.com/hoanghonghuy/synfactory/internal/controlcenter"
 	"github.com/hoanghonghuy/synfactory/internal/domain"
@@ -157,6 +158,14 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	}
 	metrics := operations.Handler{Store: store, WorkerStaleAfter: cfg.WorkerStaleAfter}
 	operatorAPI := controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter}
+	attentionAPI := attention.HTTPHandler{
+		Service: attention.Service{
+			Store:       store,
+			Revalidator: attention.WorkflowRevalidator{Store: store},
+		},
+		Query: store,
+		Token: cfg.OperatorToken,
+	}
 	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
 	if err != nil {
 		return fmt.Errorf("configure github client for api: %w", err)
@@ -194,6 +203,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	mux.HandleFunc("GET /ops", metrics.JSON)
 	mux.HandleFunc("GET /metrics", metrics.Prometheus)
 	operatorAPI.Register(mux)
+	attentionAPI.Register(mux)
 	repositoryAPI.Register(mux)
 	terminalService.register(mux)
 
