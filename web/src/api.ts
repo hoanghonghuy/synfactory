@@ -64,17 +64,18 @@ export class OperatorApiError extends Error {
 }
 
 export class OperatorApi {
-  constructor(private readonly token: string) {}
+  constructor(private readonly token = '') {}
 
   private async raw(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers)
-    headers.set('Authorization', `Bearer ${this.token}`)
+    if (this.token) headers.set('Authorization', `Bearer ${this.token}`)
     headers.set('Accept', 'application/json')
     if (init.body !== undefined) headers.set('Content-Type', 'application/json')
 
     const response = await fetch(path, {
       ...init,
       cache: 'no-store',
+      credentials: 'same-origin',
       headers,
     })
     if (!response.ok) {
