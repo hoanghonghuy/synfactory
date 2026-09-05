@@ -46,6 +46,45 @@ RETURNING id, attention_id, provider, state, attempts, next_attempt_at, last_err
 	return scanDelivery(row)
 }
 
+// EnsureNotificationDelivery creates transport work once for an attention/provider
+// pair. Existing retry/delivered/failed state is deliberately preserved so a
+// reconciliation pass cannot re-arm a completed or exhausted notification.
+func (s *Store) EnsureNotificationDelivery(ctx context.Context, delivery attention.Delivery) (bool, error) {
+	if delivery.ID == "" || delivery.AttentionID == "" || delivery.Provider == "" {
+		return false, fmt.Errorf("delivery id, attention id and provider are required")
+	}
+	now := time.Now().UTC()
+	if delivery.CreatedAt.IsZero() {
+		delivery.CreatedAt = now
+	}
+	if delivery.UpdatedAt.IsZero() {
+		delivery.UpdatedAt = now
+	}
+	if delivery.NextAttempt.IsZero() {
+		delivery.NextAttempt = now
+	}
+	if delivery.State == "" {
+		delivery.State = attention.DeliveryPending
+	}
+	result, err := s.db.ExecContext(ctx, `
+INSERT INTO notification_deliveries (
+    id, attention_id, provider, state, attempts, next_attempt_at, last_error,
+    created_at, updated_at, delivered_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT (attention_id, provider) DO NOTHING`,
+		delivery.ID, delivery.AttentionID, delivery.Provider, delivery.State, delivery.Attempts,
+		delivery.NextAttempt.UTC(), delivery.LastError, delivery.CreatedAt.UTC(), delivery.UpdatedAt.UTC(), delivery.DeliveredAt,
+	)
+	if err != nil {
+		return false, fmt.Errorf("ensure notification delivery: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read ensured notification delivery count: %w", err)
+	}
+	return affected > 0, nil
+}
+
 func (s *Store) DueNotificationDeliveries(ctx context.Context, now time.Time, limit int) ([]attention.Delivery, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
