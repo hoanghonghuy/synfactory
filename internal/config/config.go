@@ -193,6 +193,14 @@ func envInt64Positive(key string, fallback int64) int64 {
 	return parsed
 }
 
-func envDuration(key, fallbackValue string) time.Duration {
-	panic("unreachable")
+func envDuration(key string, fallback time.Duration) time.Duration {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
