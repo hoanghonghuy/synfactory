@@ -204,7 +204,15 @@ func (h Handler) audit(w http.ResponseWriter, r *http.Request) {
 func (h Handler) authorizeResponse(w http.ResponseWriter, r *http.Request, permission authz.Permission, repositoryID string) (authz.Principal, bool) {
 	authorizer := h.Authorizer
 	if authorizer == nil {
-		authorizer = authz.LegacyTokenAuthorizer{Token: h.Token}
+		legacy := authz.LegacyTokenAuthorizer{Token: h.Token}
+		if sessionStore, ok := h.Store.(authz.SessionStore); ok {
+			authorizer = authz.HybridAuthorizer{
+				Session: authz.SessionAuthorizer{Store: sessionStore},
+				Legacy:  legacy,
+			}
+		} else {
+			authorizer = legacy
+		}
 	}
 	principal, err := authorizer.Authorize(r, permission, repositoryID)
 	if err == nil {
