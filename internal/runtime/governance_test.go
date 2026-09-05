@@ -60,7 +60,7 @@ func TestRegistryBudgetFallbackSkipsDeniedRuntime(t *testing.T) {
 	if len(attempts) != 2 || attempts[0].FailureClass != FailureBudget || !errors.Is(attempts[0].Err, ErrBudgetExhausted) {
 		t.Fatalf("unexpected budget attempts: %+v", attempts)
 	}
-	if len(gate.requests) != 2 || gate.requests[0].Repository != "owner/repo" || gate.requests[0].WorkflowID != "wf-2" || gate.requests[0].TaskID != "task-9" {
+	if len(gate.requests) != 2 || gate.requests[0].Repository != "owner/repo" || gate.requests[0].WorkflowID != "wf-2" || gate.requests[0].TaskID != "task-9" || gate.requests[0].Provider != string(ProviderOpenAI) {
 		t.Fatalf("missing attribution in budget requests: %+v", gate.requests)
 	}
 }
