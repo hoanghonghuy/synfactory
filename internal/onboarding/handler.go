@@ -65,21 +65,6 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/repository-config/{id}/audit", h.audit)
 }
 
-func (h Handler) authorize(r *http.Request, permission authz.Permission, repositoryID string) (authz.Principal, bool) {
-	authorizer := h.Authorizer
-	if authorizer == nil {
-		authorizer = authz.LegacyTokenAuthorizer{Token: h.Token}
-	}
-	principal, err := authorizer.Authorize(r, permission, repositoryID)
-	if err == nil {
-		return principal, true
-	}
-	if errors.Is(err, authz.ErrForbidden) {
-		writeError(r.Context(), nil, http.StatusForbidden, "forbidden", "permission denied")
-	}
-	return principal, false
-}
-
 func (h Handler) list(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.authorizeResponse(w, r, authz.PermissionRead, ""); !ok {
 		return
