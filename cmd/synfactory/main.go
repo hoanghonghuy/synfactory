@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hoanghonghuy/synfactory/internal/authz"
 	"github.com/hoanghonghuy/synfactory/internal/config"
 	"github.com/hoanghonghuy/synfactory/internal/controlcenter"
 	"github.com/hoanghonghuy/synfactory/internal/domain"
@@ -156,7 +157,14 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 		wake = bus.all
 	}
 	metrics := operations.Handler{Store: store, WorkerStaleAfter: cfg.WorkerStaleAfter}
-	operatorAPI := controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter}
+	authorizer := authz.HybridAuthorizer{
+		Session: authz.SessionAuthorizer{Store: store},
+		Legacy:  authz.LegacyTokenAuthorizer{Token: cfg.OperatorToken},
+	}
+	operatorAPI := controlcenter.AuthorizedHandler{
+		Handler: controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter},
+		Authorizer: authorizer,
+	}
 	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
 	if err != nil {
 		return fmt.Errorf("configure github client for api: %w", err)
