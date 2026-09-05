@@ -12,9 +12,11 @@ import (
 
 func registerAuthAPI(mux *http.ServeMux, store *postgres.Store, authorizer authz.RequestAuthorizer, cfg config.Config) {
 	issuer := authz.SessionIssuer{Store: store}
+	sessions := authz.SessionAuthorizer{Store: store}
 	handler := authapi.Handler{
 		Store:      store,
 		Authorizer: authorizer,
+		Sessions:   sessions,
 		Issuer:     issuer,
 	}
 	handler.Register(mux)
