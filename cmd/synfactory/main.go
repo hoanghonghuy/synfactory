@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hoanghonghuy/synfactory/internal/attention"
 	"github.com/hoanghonghuy/synfactory/internal/authz"
 	"github.com/hoanghonghuy/synfactory/internal/config"
 	"github.com/hoanghonghuy/synfactory/internal/controlcenter"
@@ -165,6 +166,14 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 		Handler:    controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter},
 		Authorizer: authorizer,
 	}
+	attentionAPI := attention.HTTPHandler{
+		Service: attention.Service{
+			Store:       store,
+			Revalidator: attention.WorkflowRevalidator{Store: store},
+		},
+		Query: store,
+		Token: cfg.OperatorToken,
+	}
 	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
 	if err != nil {
 		return fmt.Errorf("configure github client for api: %w", err)
@@ -173,7 +182,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	if githubEnabled {
 		onboardingGitHub = githubClient
 	}
-	repositoryAPI := onboarding.Handler{Store: store, GitHub: onboardingGitHub, Token: cfg.OperatorToken}
+	repositoryAPI := onboarding.Handler{Store: store, GitHub: onboardingGitHub, Token: cfg.OperatorToken, Authorizer: authorizer}
 	terminalService, err := configureTerminal(cfg, authorizer)
 	if err != nil {
 		return fmt.Errorf("configure operator terminal: %w", err)
@@ -203,6 +212,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	mux.HandleFunc("GET /metrics", metrics.Prometheus)
 	operatorAPI.Register(mux)
 	registerAuthAPI(mux, store, authorizer)
+	attentionAPI.Register(mux)
 	repositoryAPI.Register(mux)
 	terminalService.register(mux)
 
@@ -257,6 +267,9 @@ func runScheduler(ctx context.Context, cfg config.Config, store *postgres.Store,
 		{name: "lease recovery", run: func(ctx context.Context) error {
 			return runLeaseRecovery(ctx, store, cfg.LeaseRecoveryInterval)
 		}},
+	}
+	if delivery, enabled := configuredAttentionDelivery(store); enabled {
+		components = append(components, delivery)
 	}
 	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
 	if err != nil {

@@ -1,5 +1,6 @@
 import { createApp, nextTick } from 'vue'
 import App from './App.vue'
+import AttentionInbox from './AttentionInbox.vue'
 import TerminalDock from './TerminalDock.vue'
 import './style.css'
 import './mobile-tables.css'
@@ -20,6 +21,11 @@ function labelMobileTableCells(): void {
 const observer = new MutationObserver(() => void nextTick(labelMobileTableCells))
 observer.observe(document.getElementById('app')!, { childList: true, subtree: true })
 void nextTick(labelMobileTableCells)
+
+const attentionRoot = document.createElement('div')
+attentionRoot.id = 'attention-root'
+document.body.appendChild(attentionRoot)
+createApp(AttentionInbox).mount(attentionRoot)
 
 const terminalRoot = document.createElement('div')
 terminalRoot.id = 'terminal-root'
