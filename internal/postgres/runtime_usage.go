@@ -11,13 +11,13 @@ import (
 var ErrPricingVersionConflict = errors.New("pricing version already exists with different values")
 
 type RuntimePricing struct {
-	Version                   string
-	Provider                  string
-	Model                     string
-	InputMicroUSDPerMillion   int64
-	OutputMicroUSDPerMillion  int64
-	RequestMicroUSD           int64
-	EffectiveAt               time.Time
+	Version                  string
+	Provider                 string
+	Model                    string
+	InputMicroUSDPerMillion  int64
+	OutputMicroUSDPerMillion int64
+	RequestMicroUSD          int64
+	EffectiveAt              time.Time
 }
 
 type RuntimeUsage struct {
