@@ -212,7 +212,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	mux.HandleFunc("GET /ops", metrics.JSON)
 	mux.HandleFunc("GET /metrics", metrics.Prometheus)
 	operatorAPI.Register(mux)
-	registerAuthAPI(mux, store, authorizer)
+	registerAuthAPI(mux, store, authorizer, cfg)
 	attentionAPI.Register(mux)
 	repositoryAPI.Register(mux)
 	terminalService.register(mux)
