@@ -2,11 +2,13 @@ package attention
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hoanghonghuy/synfactory/internal/authz"
 )
 
 type AttentionQuery interface {
@@ -14,17 +16,18 @@ type AttentionQuery interface {
 }
 
 type HTTPHandler struct {
-	Service Service
-	Query   AttentionQuery
-	Token   string
-	Now     func() time.Time
+	Service    Service
+	Query      AttentionQuery
+	Authorizer authz.RequestAuthorizer
+	Token      string
+	Now        func() time.Time
 }
 
 func (h HTTPHandler) Register(mux *http.ServeMux) {
-	mux.Handle("GET /api/v1/attention", h.authorize(http.HandlerFunc(h.list)))
-	mux.Handle("POST /api/v1/attention/{id}/acknowledge", h.authorize(http.HandlerFunc(h.acknowledge)))
-	mux.Handle("POST /api/v1/attention/{id}/snooze", h.authorize(http.HandlerFunc(h.snooze)))
-	mux.Handle("POST /api/v1/attention/{id}/resolve", h.authorize(http.HandlerFunc(h.resolve)))
+	mux.HandleFunc("GET /api/v1/attention", h.list)
+	mux.HandleFunc("POST /api/v1/attention/{id}/acknowledge", h.acknowledge)
+	mux.HandleFunc("POST /api/v1/attention/{id}/snooze", h.snooze)
+	mux.HandleFunc("POST /api/v1/attention/{id}/resolve", h.resolve)
 }
 
 type actorRequest struct {
@@ -41,11 +44,15 @@ type attentionPage struct {
 }
 
 func (h HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
+	repositoryID := strings.TrimSpace(r.URL.Query().Get("repository_id"))
+	if _, ok := h.authorize(w, r, authz.PermissionRead, repositoryID); !ok {
+		return
+	}
 	if h.Query == nil {
 		writeError(w, http.StatusServiceUnavailable, "attention_query_unavailable")
 		return
 	}
-	items, err := h.Query.ActiveAttention(r.Context(), strings.TrimSpace(r.URL.Query().Get("repository_id")), h.now())
+	items, err := h.Query.ActiveAttention(r.Context(), repositoryID, h.now())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "attention_query_failed")
 		return
@@ -57,11 +64,15 @@ func (h HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h HTTPHandler) acknowledge(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.authorizeAction(w, r)
+	if !ok {
+		return
+	}
 	var req actorRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	item, err := h.Service.Acknowledge(r.Context(), r.PathValue("id"), req.Actor)
+	item, err := h.Service.Acknowledge(r.Context(), r.PathValue("id"), principal.Subject)
 	if err != nil {
 		writeActionError(w, err)
 		return
@@ -70,6 +81,10 @@ func (h HTTPHandler) acknowledge(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h HTTPHandler) snooze(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.authorizeAction(w, r)
+	if !ok {
+		return
+	}
 	var req snoozeRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -78,7 +93,7 @@ func (h HTTPHandler) snooze(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "snooze deadline is required")
 		return
 	}
-	item, err := h.Service.Snooze(r.Context(), r.PathValue("id"), req.Actor, req.Until)
+	item, err := h.Service.Snooze(r.Context(), r.PathValue("id"), principal.Subject, req.Until)
 	if err != nil {
 		writeActionError(w, err)
 		return
@@ -87,11 +102,15 @@ func (h HTTPHandler) snooze(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h HTTPHandler) resolve(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.authorizeAction(w, r)
+	if !ok {
+		return
+	}
 	var req actorRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	item, err := h.Service.Resolve(r.Context(), r.PathValue("id"), req.Actor)
+	item, err := h.Service.Resolve(r.Context(), r.PathValue("id"), principal.Subject)
 	if err != nil {
 		writeActionError(w, err)
 		return
@@ -99,26 +118,37 @@ func (h HTTPHandler) resolve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, item)
 }
 
-func (h HTTPHandler) authorize(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		expected := strings.TrimSpace(h.Token)
-		if expected == "" {
-			writeError(w, http.StatusServiceUnavailable, "attention_api_disabled")
-			return
-		}
-		const prefix = "Bearer "
-		authorization := r.Header.Get("Authorization")
-		if !strings.HasPrefix(authorization, prefix) {
-			writeError(w, http.StatusUnauthorized, "operator_auth_required")
-			return
-		}
-		provided := strings.TrimSpace(strings.TrimPrefix(authorization, prefix))
-		if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
-			writeError(w, http.StatusUnauthorized, "operator_auth_invalid")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+func (h HTTPHandler) authorizeAction(w http.ResponseWriter, r *http.Request) (authz.Principal, bool) {
+	if h.Service.Store == nil {
+		writeError(w, http.StatusServiceUnavailable, "attention_store_unavailable")
+		return authz.Principal{}, false
+	}
+	item, err := h.Service.Store.AttentionByID(r.Context(), strings.TrimSpace(r.PathValue("id")))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "attention_action_failed")
+		return authz.Principal{}, false
+	}
+	return h.authorize(w, r, authz.PermissionRepositoryMutate, item.RepositoryID)
+}
+
+func (h HTTPHandler) authorize(w http.ResponseWriter, r *http.Request, permission authz.Permission, repositoryID string) (authz.Principal, bool) {
+	authorizer := h.Authorizer
+	if authorizer == nil {
+		authorizer = authz.LegacyTokenAuthorizer{Token: h.Token}
+	}
+	principal, err := authorizer.Authorize(r, permission, strings.TrimSpace(repositoryID))
+	if err == nil {
+		return principal, true
+	}
+	switch {
+	case errors.Is(err, authz.ErrUnauthenticated):
+		writeError(w, http.StatusUnauthorized, "operator_auth_required")
+	case errors.Is(err, authz.ErrForbidden):
+		writeError(w, http.StatusForbidden, "operator_permission_denied")
+	default:
+		writeError(w, http.StatusServiceUnavailable, "authorization_unavailable")
+	}
+	return authz.Principal{}, false
 }
 
 func (h HTTPHandler) now() time.Time {
