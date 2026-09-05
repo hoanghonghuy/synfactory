@@ -18,7 +18,9 @@ type lifecycleStore struct {
 	revokedTime time.Time
 }
 
-func (s *lifecycleStore) UpsertAuthUser(context.Context, string, string, string, string) error { return nil }
+func (s *lifecycleStore) UpsertAuthUser(context.Context, string, string, string, string) error {
+	return nil
+}
 func (s *lifecycleStore) ReplaceAuthGrants(context.Context, string, []authz.RoleGrant, []authz.PermissionGrant) error {
 	return nil
 }
