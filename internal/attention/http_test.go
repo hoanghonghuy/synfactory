@@ -3,6 +3,7 @@ package attention
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,13 +11,17 @@ import (
 )
 
 type httpStore struct {
-	item Item
+	item   Item
+	active []Item
 }
 
 func (s *httpStore) AttentionByID(context.Context, string) (Item, error) { return s.item, nil }
 func (s *httpStore) UpsertAttention(_ context.Context, item Item) (Item, error) {
 	s.item = item
 	return item, nil
+}
+func (s *httpStore) ActiveAttention(context.Context, string, time.Time) ([]Item, error) {
+	return s.active, nil
 }
 
 type resolvedRevalidator bool
@@ -34,6 +39,29 @@ func TestHTTPHandlerRequiresOperatorAuthorization(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestHTTPHandlerListsActiveAttention(t *testing.T) {
+	now := time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC)
+	store := &httpStore{active: []Item{{ID: "a1", RepositoryID: "repo-1", State: StateOpen, Severity: SeverityCritical, Title: "release blocked", CreatedAt: now, UpdatedAt: now}}}
+	h := HTTPHandler{Service: Service{Store: store}, Query: store, Token: "secret", Now: func() time.Time { return now }}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/attention?repository_id=repo-1", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var payload attentionPage
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Items) != 1 || payload.Items[0].ID != "a1" {
+		t.Fatalf("items = %+v", payload.Items)
 	}
 }
 
