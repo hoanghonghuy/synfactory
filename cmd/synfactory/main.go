@@ -298,6 +298,7 @@ func runWorkers(ctx context.Context, cfg config.Config, store *postgres.Store) e
 	if err != nil {
 		return fmt.Errorf("build runtime registry: %w", err)
 	}
+	registry.WithBudgetGate(runtimefactory.LedgerBudgetGate{Reader: store})
 	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
 	if err != nil {
 		return fmt.Errorf("configure github client for worker: %w", err)
