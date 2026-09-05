@@ -150,28 +150,30 @@ export class OperatorApi {
     const wire = await this.get<WorkflowDetailWire>(`/api/v1/workflows/${encodeURIComponent(id)}`)
     return {
       workflow: wire.workflow,
-      actions: wire.actions?.map((item) => ({
-        ID: item.id,
-        Kind: item.kind,
-        Role: item.role,
-        Mode: item.mode,
-        TargetState: item.target_state,
-        Revision: item.revision,
-        BudgetKind: item.budget_kind ?? '',
-        Status: item.status,
-        JobID: item.job_id ?? '',
-        Decision: item.decision ?? '',
-        CreatedAt: item.created_at,
-        CompletedAt: item.completed_at,
-      })) ?? null,
-      history: wire.history?.map((item) => ({
-        ID: item.id,
-        FromState: item.from_state,
-        ToState: item.to_state,
-        ActorRole: item.actor_role,
-        Reason: item.reason ?? '',
-        CreatedAt: item.created_at,
-      })) ?? null,
+      actions:
+        wire.actions?.map((item) => ({
+          ID: item.id,
+          Kind: item.kind,
+          Role: item.role,
+          Mode: item.mode,
+          TargetState: item.target_state,
+          Revision: item.revision,
+          BudgetKind: item.budget_kind ?? '',
+          Status: item.status,
+          JobID: item.job_id ?? '',
+          Decision: item.decision ?? '',
+          CreatedAt: item.created_at,
+          CompletedAt: item.completed_at,
+        })) ?? null,
+      history:
+        wire.history?.map((item) => ({
+          ID: item.id,
+          FromState: item.from_state,
+          ToState: item.to_state,
+          ActorRole: item.actor_role,
+          Reason: item.reason ?? '',
+          CreatedAt: item.created_at,
+        })) ?? null,
     }
   }
 
