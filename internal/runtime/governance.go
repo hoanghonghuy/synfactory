@@ -28,6 +28,7 @@ type BudgetRequest struct {
 	RunID      string
 	Role       string
 	Runtime    string
+	Provider   string
 	Model      string
 }
 
@@ -40,7 +41,7 @@ type BudgetGate interface {
 	Evaluate(ctx context.Context, request BudgetRequest) (BudgetDecision, error)
 }
 
-func budgetRequest(request Request, runtimeName, model string) BudgetRequest {
+func budgetRequest(request Request, runtimeName, provider, model string) BudgetRequest {
 	return BudgetRequest{
 		Repository: strings.TrimSpace(request.Repository),
 		WorkflowID: strings.TrimSpace(request.Metadata["workflow_id"]),
@@ -48,6 +49,7 @@ func budgetRequest(request Request, runtimeName, model string) BudgetRequest {
 		RunID:      strings.TrimSpace(request.RunID),
 		Role:       strings.TrimSpace(request.Role),
 		Runtime:    strings.TrimSpace(runtimeName),
+		Provider:   strings.TrimSpace(provider),
 		Model:      strings.TrimSpace(model),
 	}
 }
