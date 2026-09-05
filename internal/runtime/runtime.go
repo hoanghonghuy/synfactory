@@ -34,6 +34,7 @@ const (
 	FailurePermanent   FailureClass = "permanent"
 	FailureTimeout     FailureClass = "timeout"
 	FailureCanceled    FailureClass = "canceled"
+	FailureBudget      FailureClass = "budget"
 )
 
 var (
