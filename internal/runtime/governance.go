@@ -16,8 +16,8 @@ const (
 )
 
 var (
-	ErrBudgetExhausted        = errors.New("runtime budget exhausted")
-	ErrBudgetApprovalRequired = errors.New("runtime budget approval required")
+	ErrBudgetExhausted         = errors.New("runtime budget exhausted")
+	ErrBudgetApprovalRequired  = errors.New("runtime budget approval required")
 	ErrBudgetPolicyUnavailable = errors.New("runtime budget policy unavailable")
 )
 
