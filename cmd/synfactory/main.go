@@ -171,8 +171,9 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 			Store:       store,
 			Revalidator: attention.WorkflowRevalidator{Store: store},
 		},
-		Query: store,
-		Token: cfg.OperatorToken,
+		Query:      store,
+		Token:      cfg.OperatorToken,
+		Authorizer: authorizer,
 	}
 	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
 	if err != nil {
