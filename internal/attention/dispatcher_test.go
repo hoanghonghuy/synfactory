@@ -37,9 +37,9 @@ func TestDispatcherCreatesOneDurableDeliveryPerAttentionProvider(t *testing.T) {
 		Title: "Repair exhausted", Summary: "CI repair budget exhausted", CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
 	}}}
 	dispatcher := Dispatcher{
-		Store: store,
+		Store:  store,
 		Router: EscalationRouter{Rules: []EscalationRule{{MinSeverity: SeverityInfo, Providers: []string{"slack"}}}},
-		Now: func() time.Time { return now },
+		Now:    func() time.Time { return now },
 	}
 
 	created, err := dispatcher.RunOnce(context.Background())
@@ -73,9 +73,9 @@ func TestDispatcherHonorsEscalationAgeBeforeCreatingDelivery(t *testing.T) {
 		Title: "Needs attention", Summary: "not old enough", CreatedAt: now.Add(-time.Minute), UpdatedAt: now,
 	}}}
 	dispatcher := Dispatcher{
-		Store: store,
+		Store:  store,
 		Router: EscalationRouter{Rules: []EscalationRule{{MinSeverity: SeverityInfo, After: 10 * time.Minute, Providers: []string{"slack"}}}},
-		Now: func() time.Time { return now },
+		Now:    func() time.Time { return now },
 	}
 	created, err := dispatcher.RunOnce(context.Background())
 	if err != nil {
