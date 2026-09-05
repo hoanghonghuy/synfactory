@@ -112,22 +112,34 @@ func (s *Store) RecordRuntimeUsage(ctx context.Context, usage RuntimeUsage) erro
 	if usage.ID == "" || usage.Repository == "" || usage.RunID == "" || usage.Role == "" || usage.Runtime == "" || usage.Provider == "" || usage.Model == "" || usage.PricingVersion == "" {
 		return errors.New("runtime usage identity fields are required")
 	}
-	if usage.RequestCount < 0 || usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.RuntimeMS < 0 || usage.CostMicroUSD < 0 {
+	if usage.RequestCount < 0 || usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.RuntimeMS < 0 {
 		return errors.New("runtime usage values must be non-negative")
 	}
 	if usage.RecordedAt.IsZero() {
 		usage.RecordedAt = time.Now().UTC()
 	}
 
-	var provider, model string
-	if err := s.db.QueryRowContext(ctx, `SELECT provider, model FROM runtime_pricing_versions WHERE version = $1`, usage.PricingVersion).Scan(&provider, &model); err != nil {
+	var pricing RuntimePricing
+	if err := s.db.QueryRowContext(ctx, `
+SELECT version, provider, model, input_microusd_per_million,
+       output_microusd_per_million, request_microusd, effective_at
+  FROM runtime_pricing_versions
+ WHERE version = $1`, usage.PricingVersion).Scan(
+		&pricing.Version, &pricing.Provider, &pricing.Model, &pricing.InputMicroUSDPerMillion,
+		&pricing.OutputMicroUSDPerMillion, &pricing.RequestMicroUSD, &pricing.EffectiveAt,
+	); err != nil {
 		return fmt.Errorf("resolve runtime pricing version: %w", err)
 	}
-	if provider != usage.Provider || model != usage.Model {
+	if pricing.Provider != usage.Provider || pricing.Model != usage.Model {
 		return errors.New("runtime usage provider/model does not match pricing version")
 	}
+	cost, err := EstimateRuntimeCostMicroUSD(pricing, usage.RequestCount, usage.InputTokens, usage.OutputTokens)
+	if err != nil {
+		return err
+	}
+	usage.CostMicroUSD = cost
 
-	_, err := s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, `
 INSERT INTO runtime_usage_ledger (
     id, repository, workflow_id, task_id, run_id, role, runtime, provider, model,
     pricing_version, request_count, input_tokens, output_tokens, runtime_ms,
