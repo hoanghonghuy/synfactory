@@ -43,6 +43,17 @@ type WorkflowDetailWire = {
   history: WorkflowHistoryWire[] | null
 }
 
+export type CurrentSession = {
+  id: string
+  expires_at: string
+  principal: {
+    subject: string
+    display_name?: string
+    roles?: Array<{ role: string; repository_id?: string }>
+    permissions?: Array<{ permission: string; repository_id?: string }>
+  }
+}
+
 export class OperatorApiError extends Error {
   constructor(
     readonly status: number,
@@ -55,7 +66,7 @@ export class OperatorApiError extends Error {
 export class OperatorApi {
   constructor(private readonly token: string) {}
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async raw(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers)
     headers.set('Authorization', `Bearer ${this.token}`)
     headers.set('Accept', 'application/json')
@@ -77,11 +88,24 @@ export class OperatorApi {
       }
       throw new OperatorApiError(response.status, message)
     }
+    return response
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const response = await this.raw(path, init)
     return (await response.json()) as T
   }
 
   private get<T>(path: string): Promise<T> {
     return this.request(path, { method: 'GET' })
+  }
+
+  currentSession(): Promise<CurrentSession> {
+    return this.get('/api/v1/auth/session')
+  }
+
+  async revokeCurrentSession(): Promise<void> {
+    await this.raw('/api/v1/auth/session', { method: 'DELETE' })
   }
 
   overview(): Promise<Overview> {
