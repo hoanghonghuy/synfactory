@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -121,10 +120,10 @@ func (h OAuthHandler) callback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
 	_ = oauthSuccessTemplate.Execute(w, map[string]string{
-		"TokenJSON":      jsonString(issued.Token),
-		"SessionIDJSON":  jsonString(issued.ID),
-		"ExpiresAtJSON":  jsonString(issued.ExpiresAt.UTC().Format(time.RFC3339)),
-		"ReturnPathJSON": jsonString(returnPath),
+		"Token":      issued.Token,
+		"SessionID":  issued.ID,
+		"ExpiresAt":  issued.ExpiresAt.UTC().Format(time.RFC3339),
+		"ReturnPath": returnPath,
 	})
 }
 
@@ -181,9 +180,4 @@ func externalUserID(provider, subject string) string {
 	return strings.TrimSpace(provider) + ":" + strings.TrimSpace(subject)
 }
 
-func jsonString(value string) string {
-	encoded, _ := json.Marshal(value)
-	return string(encoded)
-}
-
-var oauthSuccessTemplate = template.Must(template.New("oauth-success").Parse(`<!doctype html><meta charset="utf-8"><title>SynFactory sign-in</title><script>sessionStorage.setItem("synfactory.operator.token",{{.TokenJSON}});sessionStorage.setItem("synfactory.session.id",{{.SessionIDJSON}});sessionStorage.setItem("synfactory.session.expires_at",{{.ExpiresAtJSON}});location.replace({{.ReturnPathJSON}});</script>`))
+var oauthSuccessTemplate = template.Must(template.New("oauth-success").Parse(`<!doctype html><meta charset="utf-8"><title>SynFactory sign-in</title><script>sessionStorage.setItem("synfactory.operator.token",{{.Token}});sessionStorage.setItem("synfactory.session.id",{{.SessionID}});sessionStorage.setItem("synfactory.session.expires_at",{{.ExpiresAt}});location.replace({{.ReturnPath}});</script>`))
