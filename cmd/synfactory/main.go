@@ -174,7 +174,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 		onboardingGitHub = githubClient
 	}
 	repositoryAPI := onboarding.Handler{Store: store, GitHub: onboardingGitHub, Token: cfg.OperatorToken}
-	terminalService, err := configureTerminal(cfg)
+	terminalService, err := configureTerminal(cfg, authorizer)
 	if err != nil {
 		return fmt.Errorf("configure operator terminal: %w", err)
 	}
