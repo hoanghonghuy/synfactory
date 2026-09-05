@@ -118,7 +118,7 @@ func (a *OpenAIAdapter) execute(ctx context.Context, previousResponseID string, 
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
 		finished := time.Now().UTC()
-		result := Result{Runtime: a.name, Model: model, ExitCode: -1, StartedAt: started, FinishedAt: finished}
+		result := Result{Runtime: a.name, Model: model, ExitCode: -1, StartedAt: started, FinishedAt: finished, Usage: Usage{RequestCount: 1, RuntimeMS: finished.Sub(started).Milliseconds()}}
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			result.Outcome = OutcomeTimedOut
 			return result, Failure(FailureTimeout, ErrRunTimedOut)
@@ -137,6 +137,7 @@ func (a *OpenAIAdapter) execute(ctx context.Context, previousResponseID string, 
 	result := Result{
 		Runtime: a.name, Model: model, ExitCode: 0, Output: output,
 		StartedAt: started, FinishedAt: finished,
+		Usage: Usage{RequestCount: 1, RuntimeMS: finished.Sub(started).Milliseconds()},
 	}
 	if readErr != nil {
 		result.Outcome = OutcomeFailed
@@ -166,6 +167,7 @@ func (a *OpenAIAdapter) execute(ctx context.Context, previousResponseID string, 
 	}
 	result.Events = []Event{{Kind: "api_response", Data: object}}
 	result.SessionID = findString(object, "id")
+	result.Usage = extractOpenAIUsage(object, result.Usage)
 	if a.apiStyle == "chat_completions" {
 		result.Summary = extractChatCompletion(object)
 	} else {
@@ -176,6 +178,37 @@ func (a *OpenAIAdapter) execute(ctx context.Context, previousResponseID string, 
 	}
 	result.Outcome = OutcomeSucceeded
 	return result, nil
+}
+
+func extractOpenAIUsage(object map[string]any, base Usage) Usage {
+	usage, ok := object["usage"].(map[string]any)
+	if !ok {
+		return base
+	}
+	base.InputTokens = firstInt64(usage, "input_tokens", "prompt_tokens")
+	base.OutputTokens = firstInt64(usage, "output_tokens", "completion_tokens")
+	return base
+}
+
+func firstInt64(object map[string]any, keys ...string) int64 {
+	for _, key := range keys {
+		switch value := object[key].(type) {
+		case float64:
+			if value >= 0 {
+				return int64(value)
+			}
+		case int64:
+			if value >= 0 {
+				return value
+			}
+		case json.Number:
+			parsed, err := value.Int64()
+			if err == nil && parsed >= 0 {
+				return parsed
+			}
+		}
+	}
+	return 0
 }
 
 func extractChatCompletion(object map[string]any) string {
