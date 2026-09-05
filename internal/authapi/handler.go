@@ -21,6 +21,7 @@ type Store interface {
 type Handler struct {
 	Store      Store
 	Authorizer authz.RequestAuthorizer
+	Sessions   authz.SessionAuthorizer
 	Issuer     authz.SessionIssuer
 	Now        func() time.Time
 }
@@ -34,9 +35,17 @@ type issueSessionRequest struct {
 	TTLSeconds      int64                   `json:"ttl_seconds,omitempty"`
 }
 
+type currentSessionResponse struct {
+	ID        string          `json:"id"`
+	ExpiresAt time.Time       `json:"expires_at"`
+	Principal authz.Principal `json:"principal"`
+}
+
 func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/users/{id}/sessions", h.issueSession)
 	mux.HandleFunc("DELETE /api/v1/auth/sessions/{id}", h.revokeSession)
+	mux.HandleFunc("GET /api/v1/auth/session", h.currentSession)
+	mux.HandleFunc("DELETE /api/v1/auth/session", h.revokeCurrentSession)
 }
 
 func (h Handler) issueSession(w http.ResponseWriter, r *http.Request) {
@@ -87,15 +96,44 @@ func (h Handler) revokeSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "auth_store_unavailable"})
 		return
 	}
-	now := time.Now().UTC()
-	if h.Now != nil {
-		now = h.Now().UTC()
-	}
-	if err := h.Store.RevokeAuthSession(r.Context(), strings.TrimSpace(r.PathValue("id")), now); err != nil {
+	if err := h.Store.RevokeAuthSession(r.Context(), strings.TrimSpace(r.PathValue("id")), h.now()); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session_not_found"})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h Handler) currentSession(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.authenticateSession(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, currentSessionResponse{ID: session.ID, ExpiresAt: session.ExpiresAt, Principal: session.Principal})
+}
+
+func (h Handler) revokeCurrentSession(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.authenticateSession(w, r)
+	if !ok {
+		return
+	}
+	if h.Store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "auth_store_unavailable"})
+		return
+	}
+	if err := h.Store.RevokeAuthSession(r.Context(), session.ID, h.now()); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session_not_found"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h Handler) authenticateSession(w http.ResponseWriter, r *http.Request) (authz.SessionRecord, bool) {
+	session, err := h.Sessions.Authenticate(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "session_invalid"})
+		return authz.SessionRecord{}, false
+	}
+	return session, true
 }
 
 func (h Handler) authorize(w http.ResponseWriter, r *http.Request) bool {
@@ -113,6 +151,13 @@ func (h Handler) authorize(w http.ResponseWriter, r *http.Request) bool {
 	}
 	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	return false
+}
+
+func (h Handler) now() time.Time {
+	if h.Now != nil {
+		return h.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
