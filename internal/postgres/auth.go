@@ -11,6 +11,24 @@ import (
 	"github.com/hoanghonghuy/synfactory/internal/authz"
 )
 
+func (s *Store) FindAuthUserByExternalIdentity(ctx context.Context, provider, providerSubject string) (string, bool, error) {
+	provider = strings.TrimSpace(provider)
+	providerSubject = strings.TrimSpace(providerSubject)
+	if provider == "" || providerSubject == "" {
+		return "", false, fmt.Errorf("provider and provider subject are required")
+	}
+	var id string
+	err := s.db.QueryRowContext(ctx, `
+SELECT id FROM auth_users WHERE provider = $1 AND provider_subject = $2`, provider, providerSubject).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("find auth user by external identity: %w", err)
+	}
+	return id, true, nil
+}
+
 func (s *Store) UpsertAuthUser(ctx context.Context, id, provider, providerSubject, displayName string) error {
 	id = strings.TrimSpace(id)
 	provider = strings.TrimSpace(provider)
