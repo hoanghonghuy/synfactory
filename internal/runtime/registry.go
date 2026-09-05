@@ -117,7 +117,7 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		attemptRequest.RunID = scopedRunID(request.RunID, index+1)
 
 		if gate := r.budgetGate(); gate != nil {
-			decision, err := gate.Evaluate(ctx, budgetRequest(request, candidate.Runtime, model))
+			decision, err := gate.Evaluate(ctx, budgetRequest(request, candidate.Runtime, string(runtimeCfg.Kind), model))
 			if err != nil {
 				return Result{}, attempts, Failure(FailureBudget, errors.Join(ErrBudgetPolicyUnavailable, err))
 			}
