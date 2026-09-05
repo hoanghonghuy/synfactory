@@ -80,6 +80,13 @@ type Request struct {
 	Sandbox     SandboxSpec
 }
 
+type Usage struct {
+	RequestCount int64
+	InputTokens  int64
+	OutputTokens int64
+	RuntimeMS    int64
+}
+
 type Result struct {
 	Runtime     string
 	Model       string
@@ -91,6 +98,7 @@ type Result struct {
 	Diagnostics string
 	Artifacts   []string
 	Events      []Event
+	Usage       Usage
 	StartedAt   time.Time
 	FinishedAt  time.Time
 }
