@@ -23,6 +23,20 @@ type BudgetSnapshotReader interface {
 	BudgetSnapshot(ctx context.Context, request BudgetRequest) (BudgetSnapshot, error)
 }
 
+// BudgetSnapshotLeaser optionally serializes hard-budget admission for the
+// lifetime of one runtime attempt. The returned release function must be called
+// after durable usage accounting has finished so another worker cannot evaluate
+// the same hard cap against stale spend.
+type BudgetSnapshotLeaser interface {
+	AcquireBudgetSnapshot(ctx context.Context, request BudgetRequest) (BudgetSnapshot, func(), error)
+}
+
+// BudgetLeaseGate is implemented by gates that can keep hard-budget admission
+// serialized until the caller releases the attempt lease.
+type BudgetLeaseGate interface {
+	Acquire(ctx context.Context, request BudgetRequest) (BudgetDecision, func(), error)
+}
+
 type LedgerBudgetGate struct {
 	Reader BudgetSnapshotReader
 }
@@ -35,6 +49,34 @@ func (g LedgerBudgetGate) Evaluate(ctx context.Context, request BudgetRequest) (
 	if err != nil {
 		return BudgetDecision{}, err
 	}
+	return budgetDecisionFromSnapshot(snapshot)
+}
+
+func (g LedgerBudgetGate) Acquire(ctx context.Context, request BudgetRequest) (BudgetDecision, func(), error) {
+	if g.Reader == nil {
+		return BudgetDecision{}, nil, ErrBudgetPolicyUnavailable
+	}
+	leaser, ok := g.Reader.(BudgetSnapshotLeaser)
+	if !ok {
+		decision, err := g.Evaluate(ctx, request)
+		return decision, func() {}, err
+	}
+	snapshot, release, err := leaser.AcquireBudgetSnapshot(ctx, request)
+	if err != nil {
+		return BudgetDecision{}, nil, err
+	}
+	if release == nil {
+		release = func() {}
+	}
+	decision, err := budgetDecisionFromSnapshot(snapshot)
+	if err != nil {
+		release()
+		return BudgetDecision{}, nil, err
+	}
+	return decision, release, nil
+}
+
+func budgetDecisionFromSnapshot(snapshot BudgetSnapshot) (BudgetDecision, error) {
 	snapshot.Reason = strings.TrimSpace(snapshot.Reason)
 
 	if snapshot.HardExceeded && !snapshot.OverrideAuthorized {
