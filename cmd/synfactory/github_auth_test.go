@@ -21,15 +21,14 @@ func TestResolveGitHubAppPrivateKeyPrefersLogicalProvider(t *testing.T) {
 	}
 }
 
-func TestResolveGitHubAppPrivateKeyFallsBackToLegacyFile(t *testing.T) {
-	t.Setenv("SYNFACTORY_GITHUB_APP_PRIVATE_KEY", "")
+func TestResolveGitHubAppPrivateKeyFallsBackToLegacyFileWhenLogicalSecretMissing(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "github-app.pem")
 	if err := os.WriteFile(path, []byte("legacy-key"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	key, err := resolveGitHubAppPrivateKey(secrets.EnvProvider{Prefix: "SYNFACTORY_"}, path)
+	key, err := resolveGitHubAppPrivateKey(secrets.EnvProvider{Prefix: "SYNFACTORY_TEST_"}, path)
 	if err != nil {
 		t.Fatal(err)
 	}
