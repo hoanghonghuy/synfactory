@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -44,6 +45,31 @@ func TestRuntimeBudgetOutcomePriorityUsesMostRestrictiveOutcome(t *testing.T) {
 	}
 	if runtimeBudgetOutcomePriority(runtimepolicy.BudgetPark) <= runtimeBudgetOutcomePriority(runtimepolicy.BudgetFallback) {
 		t.Fatal("park must be more restrictive than fallback")
+	}
+}
+
+func TestRuntimeBudgetCeilTokenCostRoundsUp(t *testing.T) {
+	got, err := runtimeBudgetCeilTokenCost(1_500_000, 3)
+	if err != nil {
+		t.Fatalf("runtimeBudgetCeilTokenCost() error = %v", err)
+	}
+	if got != 5 {
+		t.Fatalf("runtimeBudgetCeilTokenCost() = %d, want 5", got)
+	}
+}
+
+func TestRuntimeBudgetCeilTokenCostRejectsOverflow(t *testing.T) {
+	if _, err := runtimeBudgetCeilTokenCost(math.MaxInt64, 2); err == nil {
+		t.Fatal("runtimeBudgetCeilTokenCost() expected overflow error")
+	}
+}
+
+func TestRuntimeBudgetReservationIDIsAttemptScoped(t *testing.T) {
+	base := runtimepolicy.BudgetRequest{Repository: "owner/repo", RunID: "job-1.1", Provider: "openai", Model: "gpt"}
+	other := base
+	other.RunID = "job-1.2"
+	if runtimeBudgetReservationID(base) == runtimeBudgetReservationID(other) {
+		t.Fatal("runtime budget reservation ids must differ across attempt-scoped run ids")
 	}
 }
 
