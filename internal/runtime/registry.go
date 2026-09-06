@@ -116,16 +116,27 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		attemptRequest := request
 		attemptRequest.Model = model
 		attemptRequest.RunID = scopedRunID(request.RunID, index+1)
+		budgetReq := budgetRequest(attemptRequest, candidate.Runtime, provider, model, runtimeCfg)
+		gate := r.budgetGate()
 
 		budgetRelease := func() {}
 		releaseBudget := func() {
 			budgetRelease()
 			budgetRelease = func() {}
 		}
-		if gate := r.budgetGate(); gate != nil {
+		releaseNonExecuted := func() error {
+			if gate == nil {
+				return nil
+			}
+			releaser, ok := gate.(BudgetNonExecutionReleaser)
+			if !ok {
+				return nil
+			}
+			return releaser.ReleaseNonExecuted(ctx, budgetReq)
+		}
+		if gate != nil {
 			var decision BudgetDecision
 			var err error
-			budgetReq := budgetRequest(attemptRequest, candidate.Runtime, provider, model, runtimeCfg)
 			if leaseGate, ok := gate.(BudgetLeaseGate); ok {
 				decision, budgetRelease, err = leaseGate.Acquire(ctx, budgetReq)
 				if budgetRelease == nil {
@@ -159,7 +170,11 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Provider: provider, Model: model}
 		if observer != nil {
 			if err := observer.AttemptStarted(ctx, attempt); err != nil {
+				releaseErr := releaseNonExecuted()
 				releaseBudget()
+				if releaseErr != nil {
+					return Result{}, attempts, errors.Join(fmt.Errorf("observe runtime attempt start: %w", err), ErrBudgetPolicyUnavailable, releaseErr)
+				}
 				return Result{}, attempts, fmt.Errorf("observe runtime attempt start: %w", err)
 			}
 		}
@@ -171,11 +186,16 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 			attempt.Result = Result{Runtime: candidate.Runtime, Model: model, Outcome: outcomeForFailure(attempt.FailureClass), ExitCode: -1}
 			if observer != nil {
 				if err := observer.AttemptFinished(ctx, attempt); err != nil {
+					releaseErr := releaseNonExecuted()
 					releaseBudget()
-					return attempt.Result, append(attempts, attempt), errors.Join(probeErr, err)
+					return attempt.Result, append(attempts, attempt), errors.Join(probeErr, err, releaseErr)
 				}
 			}
+			releaseErr := releaseNonExecuted()
 			releaseBudget()
+			if releaseErr != nil {
+				return attempt.Result, append(attempts, attempt), Failure(FailureBudget, errors.Join(ErrBudgetPolicyUnavailable, releaseErr))
+			}
 			attempts = append(attempts, attempt)
 			if fallbackOn[attempt.FailureClass] {
 				continue
