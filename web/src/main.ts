@@ -1,11 +1,13 @@
 import { createApp, nextTick } from 'vue'
-import App from './App.vue'
+import AuthGate from './AuthGate.vue'
+import AttentionInbox from './AttentionInbox.vue'
 import AutonomyHealth from './AutonomyHealth.vue'
+import RuntimeUsageDock from './RuntimeUsageDock.vue'
 import TerminalDock from './TerminalDock.vue'
 import './style.css'
 import './mobile-tables.css'
 
-createApp(App).mount('#app')
+createApp(AuthGate).mount('#app')
 
 function labelMobileTableCells(): void {
   document.querySelectorAll<HTMLTableElement>('.table-wrap table').forEach((table) => {
@@ -22,10 +24,20 @@ const observer = new MutationObserver(() => void nextTick(labelMobileTableCells)
 observer.observe(document.getElementById('app')!, { childList: true, subtree: true })
 void nextTick(labelMobileTableCells)
 
+const attentionRoot = document.createElement('div')
+attentionRoot.id = 'attention-root'
+document.body.appendChild(attentionRoot)
+createApp(AttentionInbox).mount(attentionRoot)
+
 const healthRoot = document.createElement('div')
 healthRoot.id = 'autonomy-health-root'
 document.body.appendChild(healthRoot)
 createApp(AutonomyHealth).mount(healthRoot)
+
+const usageRoot = document.createElement('div')
+usageRoot.id = 'runtime-usage-root'
+document.body.appendChild(usageRoot)
+createApp(RuntimeUsageDock).mount(usageRoot)
 
 const terminalRoot = document.createElement('div')
 terminalRoot.id = 'terminal-root'
