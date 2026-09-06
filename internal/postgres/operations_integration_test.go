@@ -101,3 +101,66 @@ func TestOperationalStatsExposeQueueLeaseWorkflowAndWorkerHealth(t *testing.T) {
 
 	_ = fmt.Sprintf("%+v", stats)
 }
+
+func TestOperationalStatsExposeDurableAutonomyHealth(t *testing.T) {
+	store := openTestStore(t)
+	repo := seedRepository(t, store)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	stuck := workflow.NewInstance(repo.ID, workflow.KindIssue, "health-stuck", "head-a", 100)
+	stuck, err := store.UpsertWorkflow(ctx, stuck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE workflow_instances SET state = 'implementing', updated_at = $2 WHERE id = $1`, stuck.ID, now.Add(-30*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	repair := workflow.NewInstance(repo.ID, workflow.KindIssue, "health-repair", "head-b", 100)
+	repair, err = store.UpsertWorkflow(ctx, repair)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE workflow_instances SET state = 'verifying', ci_repair_attempts = 1, updated_at = $2 WHERE id = $1`, repair.ID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	exhausted := workflow.NewInstance(repo.ID, workflow.KindIssue, "health-exhausted", "head-c", 100)
+	exhausted, err = store.UpsertWorkflow(ctx, exhausted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE workflow_instances SET state = 'parked', ci_repair_attempts = ci_repair_limit, updated_at = $2 WHERE id = $1`, exhausted.ID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	completed := workflow.NewInstance(repo.ID, workflow.KindIssue, "health-completed", "head-d", 100)
+	completed, err = store.UpsertWorkflow(ctx, completed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO workflow_history (workflow_id, from_state, to_state, actor_role, reason, created_at) VALUES ($1, 'merge_gating', 'completed', 'team_lead', 'merged', $2)`, completed.ID, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO workflow_history (workflow_id, from_state, to_state, actor_role, reason, created_at) VALUES ($1, 'blocked', 'ready', 'team_lead', 'dependency changed', $2)`, repair.ID, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO workflow_actions (id, workflow_id, action_key, kind, role, mode, target_state, status, created_at, completed_at) VALUES ('health-action-complete', $1, 'health-action-complete', 'verify', 'reviewer', 'job', 'verifying', 'completed', $2, $2), ('health-action-pending', $1, 'health-action-pending', 'review', 'reviewer', 'job', 'reviewing', 'pending', $2, NULL)`, repair.ID, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := store.OperationalStats(ctx, now, now.Add(-2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.StuckWorkflows != 1 || stats.RepairingWorkflows != 1 || stats.ExhaustedRepairBudgets != 1 {
+		t.Fatalf("unexpected autonomy workflow health: %+v", stats)
+	}
+	if stats.CompletedWorkflows24h != 1 || stats.RecoveredWorkflows24h != 1 {
+		t.Fatalf("unexpected autonomy transition health: %+v", stats)
+	}
+	if stats.WorkflowActions24h != 2 || stats.CompletedActions24h != 1 || stats.UsefulWorkRatio24h != 0.5 {
+		t.Fatalf("unexpected autonomy useful-work health: %+v", stats)
+	}
+}

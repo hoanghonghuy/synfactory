@@ -61,8 +61,21 @@ func (h Handler) Prometheus(w http.ResponseWriter, r *http.Request) {
 	writeGauge(w, "synfactory_workflows_parked", "Workflows parked after bounded recovery was exhausted.", stats.ParkedWorkflows)
 	writeGauge(w, "synfactory_workers_live", "Workers with a fresh heartbeat and not draining.", stats.LiveWorkers)
 	writeGauge(w, "synfactory_workers_stale", "Workers with stale heartbeat or draining state.", stats.StaleWorkers)
+	writeGauge(w, "synfactory_autonomy_workflows_active", "Non-terminal workflows currently under autonomous control.", stats.ActiveWorkflows)
+	writeGauge(w, "synfactory_autonomy_workflows_stuck", "Runnable workflows with no state update for at least 15 minutes.", stats.StuckWorkflows)
+	writeGauge(w, "synfactory_autonomy_workflows_repairing", "Active workflows that have consumed at least one bounded CI or review repair attempt.", stats.RepairingWorkflows)
+	writeGauge(w, "synfactory_autonomy_repair_budgets_exhausted", "Parked workflows whose configured CI or review repair budget is exhausted.", stats.ExhaustedRepairBudgets)
+	writeGauge(w, "synfactory_autonomy_workflows_completed_24h", "Workflow completion transitions recorded in the last 24 hours.", stats.CompletedWorkflows24h)
+	writeGauge(w, "synfactory_autonomy_workflows_recovered_24h", "Transitions out of blocked or parked state recorded in the last 24 hours.", stats.RecoveredWorkflows24h)
+	writeGauge(w, "synfactory_autonomy_actions_24h", "Workflow actions created in the last 24 hours.", stats.WorkflowActions24h)
+	writeGauge(w, "synfactory_autonomy_actions_completed_24h", "Workflow actions completed in the last 24-hour cohort.", stats.CompletedActions24h)
+	writeFloatGauge(w, "synfactory_autonomy_useful_work_ratio_24h", "Fraction of the last 24-hour action cohort that completed.", stats.UsefulWorkRatio24h)
 }
 
 func writeGauge(w http.ResponseWriter, name, help string, value int64) {
 	_, _ = fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s gauge\n%s %d\n", name, help, name, name, value)
+}
+
+func writeFloatGauge(w http.ResponseWriter, name, help string, value float64) {
+	_, _ = fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s gauge\n%s %.6f\n", name, help, name, name, value)
 }
