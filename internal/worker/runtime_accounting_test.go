@@ -14,10 +14,10 @@ import (
 
 type accountingStore struct {
 	fakeStore
-	pricing		postgres.RuntimePricing
-	pricingErr	error
-	recordErr	error
-	usage		[]postgres.RuntimeUsage
+	pricing    postgres.RuntimePricing
+	pricingErr error
+	recordErr  error
+	usage      []postgres.RuntimeUsage
 }
 
 func (s *accountingStore) ResolveRuntimePricing(context.Context, string, string, time.Time) (postgres.RuntimePricing, error) {
