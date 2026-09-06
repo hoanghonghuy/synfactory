@@ -28,8 +28,18 @@ func governedTestRegistry(first, second *fakeAdapter, gate BudgetGate) *Registry
 		adapters: map[string]Adapter{"premium": first, "economy": second},
 		config: Config{
 			Runtimes: map[string]RuntimeConfig{
-				"premium": {Kind: ProviderOpenAI, Model: "premium-model", BudgetInputTokenLimit: 4096, BudgetOutputTokenLimit: 2048},
-				"economy": {Kind: ProviderOpenAI, Model: "economy-model", BudgetInputTokenLimit: 2048, BudgetOutputTokenLimit: 1024},
+				"premium": {
+					Kind:                   ProviderOpenAI,
+					Model:                  "premium-model",
+					BudgetInputTokenLimit:  4096,
+					BudgetOutputTokenLimit: 2048,
+				},
+				"economy": {
+					Kind:                   ProviderOpenAI,
+					Model:                  "economy-model",
+					BudgetInputTokenLimit:  2048,
+					BudgetOutputTokenLimit: 1024,
+				},
 			},
 			Roles: map[string]RoleConfig{
 				"developer": {Chain: []CandidateConfig{{Runtime: "premium"}, {Runtime: "economy"}}},
