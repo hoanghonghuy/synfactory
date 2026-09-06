@@ -15,19 +15,19 @@ const (
 )
 
 type RuntimeBudgetReservation struct {
-	ID                  string
-	Repository          string
-	WorkflowID          string
-	TaskID              string
-	RunID               string
-	Role                string
-	Provider            string
-	Model               string
+	ID                   string
+	Repository           string
+	WorkflowID           string
+	TaskID               string
+	RunID                string
+	Role                 string
+	Provider             string
+	Model                string
 	ReservedCostMicroUSD int64
-	State               string
-	ExpiresAt           time.Time
-	CreatedAt           time.Time
-	ResolvedAt          *time.Time
+	State                string
+	ExpiresAt            time.Time
+	CreatedAt            time.Time
+	ResolvedAt           *time.Time
 }
 
 func validateRuntimeBudgetReservation(reservation RuntimeBudgetReservation) error {
