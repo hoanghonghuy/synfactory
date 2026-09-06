@@ -125,13 +125,14 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		if gate := r.budgetGate(); gate != nil {
 			var decision BudgetDecision
 			var err error
+			budgetReq := budgetRequest(attemptRequest, candidate.Runtime, provider, model, runtimeCfg)
 			if leaseGate, ok := gate.(BudgetLeaseGate); ok {
-				decision, budgetRelease, err = leaseGate.Acquire(ctx, budgetRequest(request, candidate.Runtime, provider, model))
+				decision, budgetRelease, err = leaseGate.Acquire(ctx, budgetReq)
 				if budgetRelease == nil {
 					budgetRelease = func() {}
 				}
 			} else {
-				decision, err = gate.Evaluate(ctx, budgetRequest(request, candidate.Runtime, provider, model))
+				decision, err = gate.Evaluate(ctx, budgetReq)
 			}
 			if err != nil {
 				releaseBudget()
