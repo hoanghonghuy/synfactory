@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -51,6 +52,7 @@ type Job struct {
 	LeaseOwner   string
 	LeaseUntil   *time.Time
 	LastError    string
+	Metadata     json.RawMessage
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
