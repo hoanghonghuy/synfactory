@@ -311,6 +311,7 @@ func routingDecisionEvent(decision RoutingDecision) Event {
 			"attempts":               decision.Attempts,
 			"successes":              decision.Successes,
 			"failures":               decision.Failures,
+			"rework":                 decision.Rework,
 			"average_runtime_ms":     decision.AverageRuntimeMS,
 			"average_cost_microusd": decision.AverageCostMicroUSD,
 		},
