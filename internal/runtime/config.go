@@ -34,6 +34,7 @@ type RuntimeConfig struct {
 	ProbeTimeout           Duration          `json:"probe_timeout,omitempty"`
 	BudgetInputTokenLimit  int64             `json:"budget_input_token_limit,omitempty"`
 	BudgetOutputTokenLimit int64             `json:"budget_output_token_limit,omitempty"`
+	RoutingCapabilityScore int64             `json:"routing_capability_score,omitempty"`
 }
 
 type CandidateConfig struct {
@@ -42,8 +43,9 @@ type CandidateConfig struct {
 }
 
 type RoleConfig struct {
-	Chain      []CandidateConfig `json:"chain"`
-	FallbackOn []FailureClass    `json:"fallback_on,omitempty"`
+	Chain          []CandidateConfig `json:"chain"`
+	FallbackOn     []FailureClass    `json:"fallback_on,omitempty"`
+	DynamicRouting bool              `json:"dynamic_routing,omitempty"`
 }
 
 type Config struct {
@@ -106,6 +108,9 @@ func (c Config) Validate() error {
 		}
 		if runtimeCfg.BudgetInputTokenLimit < 0 || runtimeCfg.BudgetOutputTokenLimit < 0 {
 			return fmt.Errorf("runtime %q budget token limits must be non-negative", name)
+		}
+		if runtimeCfg.RoutingCapabilityScore < 0 || runtimeCfg.RoutingCapabilityScore > 100 {
+			return fmt.Errorf("runtime %q routing capability score must be between 0 and 100", name)
 		}
 		switch runtimeCfg.Kind {
 		case ProviderCodex, ProviderCursor, ProviderAntigravity, ProviderClaude, ProviderOpenCode:
