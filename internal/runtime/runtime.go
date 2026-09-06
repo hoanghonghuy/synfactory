@@ -104,13 +104,14 @@ type Result struct {
 }
 
 type Attempt struct {
-	Sequence     int
-	Runtime      string
-	Provider     string
-	Model        string
-	FailureClass FailureClass
-	Result       Result
-	Err          error
+	Sequence        int
+	Runtime         string
+	Provider        string
+	Model           string
+	RoutingDecision *RoutingDecision
+	FailureClass    FailureClass
+	Result          Result
+	Err             error
 }
 
 type Observer interface {
