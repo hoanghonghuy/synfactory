@@ -106,6 +106,7 @@ type Result struct {
 type Attempt struct {
 	Sequence     int
 	Runtime      string
+	Provider     string
 	Model        string
 	FailureClass FailureClass
 	Result       Result
