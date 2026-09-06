@@ -17,10 +17,10 @@ type RoutingMetricsRequest struct {
 }
 
 type RoutingMetrics struct {
-	Attempts        int64
-	Successes       int64
-	Failures        int64
-	AverageRuntimeMS int64
+	Attempts            int64
+	Successes           int64
+	Failures            int64
+	AverageRuntimeMS    int64
 	AverageCostMicroUSD int64
 }
 
