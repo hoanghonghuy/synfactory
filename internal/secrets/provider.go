@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
 var ErrNotFound = errors.New("secret not found")
+
+const maxFileSecretBytes = 1 << 20
 
 type Value struct {
 	Bytes    []byte
@@ -53,21 +56,38 @@ func (p FileProvider) Resolve(_ context.Context, logicalName string) (Value, err
 	if err != nil {
 		return Value{}, err
 	}
-	root := filepath.Clean(strings.TrimSpace(p.Root))
-	if root == "." || !filepath.IsAbs(root) {
+	rootPath := filepath.Clean(strings.TrimSpace(p.Root))
+	if rootPath == "." || !filepath.IsAbs(rootPath) {
 		return Value{}, errors.New("secret file root must be an absolute path")
 	}
-	path := filepath.Join(root, filepath.FromSlash(name))
-	rel, err := filepath.Rel(root, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return Value{}, errors.New("secret path escapes configured root")
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return Value{}, fmt.Errorf("open secret root: %w", err)
 	}
-	value, err := os.ReadFile(path)
+	defer root.Close()
+
+	file, err := root.Open(filepath.FromSlash(name))
 	if errors.Is(err, os.ErrNotExist) {
 		return Value{}, fmt.Errorf("%w: %s", ErrNotFound, logicalName)
 	}
 	if err != nil {
+		return Value{}, fmt.Errorf("open secret %q: %w", logicalName, err)
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return Value{}, fmt.Errorf("stat secret %q: %w", logicalName, err)
+	}
+	if !info.Mode().IsRegular() {
+		return Value{}, errors.New("secret file must be a regular file")
+	}
+	value, err := io.ReadAll(io.LimitReader(file, maxFileSecretBytes+1))
+	if err != nil {
 		return Value{}, fmt.Errorf("read secret %q: %w", logicalName, err)
+	}
+	if len(value) > maxFileSecretBytes {
+		return Value{}, errors.New("secret file exceeds size limit")
 	}
 	return Value{Bytes: value, Provider: "file"}, nil
 }
