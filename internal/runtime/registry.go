@@ -44,6 +44,11 @@ func (r *Registry) WithBudgetGate(gate BudgetGate) *Registry {
 	}
 	r.mu.Lock()
 	r.budget = gate
+	if ledger, ok := gate.(LedgerBudgetGate); ok {
+		if reader, ok := ledger.Reader.(RoutingMetricsReader); ok {
+			r.routing = reader
+		}
+	}
 	r.mu.Unlock()
 	return r
 }
@@ -209,7 +214,7 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		if probeErr != nil {
 			attempt.Err = probeErr
 			attempt.FailureClass = ClassifyFailure(probeErr)
-			attempt.Result = Result{Runtime: candidate.Runtime, Model: model, Outcome: outcomeForFailure(attempt.FailureClass), ExitCode: -1}
+			attempt.Result = Result{Runtime: candidate.Runtime, Model: model, Outcome: outcomeForFailure(attempt.FailureClass), ExitCode: -1, Events: []Event{routingDecisionEvent(routingDecision)}}
 			if observer != nil {
 				if err := observer.AttemptFinished(ctx, attempt); err != nil {
 					releaseErr := releaseNonExecuted()
@@ -236,6 +241,7 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		} else {
 			result, runErr = adapter.Run(ctx, attemptRequest)
 		}
+		result.Events = append(result.Events, routingDecisionEvent(routingDecision))
 		attempt.Result = result
 		attempt.Err = runErr
 		attempt.FailureClass = ClassifyFailure(runErr)
@@ -290,6 +296,24 @@ func budgetAttempt(sequence int, runtimeName, provider, model string, routing *R
 		FailureClass:    FailureBudget,
 		Result:          Result{Runtime: runtimeName, Model: model, Outcome: OutcomeUnavailable, ExitCode: -1},
 		Err:             Failure(FailureBudget, err),
+	}
+}
+
+func routingDecisionEvent(decision RoutingDecision) Event {
+	return Event{
+		Kind: "routing_decision",
+		Data: map[string]any{
+			"policy_version":         decision.PolicyVersion,
+			"score":                  decision.Score,
+			"original_order":         decision.OriginalOrder,
+			"task_complexity":        decision.TaskComplexity,
+			"capability_score":       decision.CapabilityScore,
+			"attempts":               decision.Attempts,
+			"successes":              decision.Successes,
+			"failures":               decision.Failures,
+			"average_runtime_ms":     decision.AverageRuntimeMS,
+			"average_cost_microusd": decision.AverageCostMicroUSD,
+		},
 	}
 }
 
