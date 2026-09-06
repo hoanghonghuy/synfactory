@@ -14,6 +14,7 @@ type Registry struct {
 	adapters map[string]Adapter
 	config   Config
 	budget   BudgetGate
+	routing  RoutingMetricsReader
 }
 
 func BuildRegistry(cfg Config, supervisor *Supervisor, httpClient *http.Client) (*Registry, error) {
@@ -47,6 +48,16 @@ func (r *Registry) WithBudgetGate(gate BudgetGate) *Registry {
 	return r
 }
 
+func (r *Registry) WithRoutingMetrics(reader RoutingMetricsReader) *Registry {
+	if r == nil {
+		return r
+	}
+	r.mu.Lock()
+	r.routing = reader
+	r.mu.Unlock()
+	return r
+}
+
 func (r *Registry) Adapter(name string) (Adapter, bool) {
 	if r == nil {
 		return nil, false
@@ -64,6 +75,15 @@ func (r *Registry) budgetGate() BudgetGate {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.budget
+}
+
+func (r *Registry) routingMetrics() RoutingMetricsReader {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.routing
 }
 
 func (r *Registry) Probe(ctx context.Context) map[string]error {
@@ -93,15 +113,21 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 	if !ok || len(roleCfg.Chain) == 0 {
 		return Result{}, nil, fmt.Errorf("%w for role %q", ErrNoRuntimeRoute, request.Role)
 	}
+	ranked, err := rankRoleCandidates(ctx, r.routingMetrics(), request, roleCfg, r.config.Runtimes)
+	if err != nil {
+		return Result{}, nil, Failure(FailureTransient, fmt.Errorf("load runtime routing scoreboard: %w", err))
+	}
 	fallbackOn := roleCfg.effectiveFallbackOn()
-	attempts := make([]Attempt, 0, len(roleCfg.Chain))
+	attempts := make([]Attempt, 0, len(ranked))
 
-	for index, candidate := range roleCfg.Chain {
+	for index, rankedCandidate := range ranked {
+		candidate := rankedCandidate.Candidate
+		routingDecision := rankedCandidate.Decision
 		runtimeCfg := r.config.Runtimes[candidate.Runtime]
 		provider := string(runtimeCfg.Kind)
 		adapter, ok := r.Adapter(candidate.Runtime)
 		if !ok {
-			attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Provider: provider, FailureClass: FailureUnavailable, Err: ErrRuntimeUnavailable}
+			attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Provider: provider, RoutingDecision: &routingDecision, FailureClass: FailureUnavailable, Err: ErrRuntimeUnavailable}
 			attempts = append(attempts, attempt)
 			if !fallbackOn[FailureUnavailable] {
 				return Result{}, attempts, attempt.Err
@@ -136,38 +162,38 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		}
 		if gate != nil {
 			var decision BudgetDecision
-			var err error
+			var budgetErr error
 			if leaseGate, ok := gate.(BudgetLeaseGate); ok {
-				decision, budgetRelease, err = leaseGate.Acquire(ctx, budgetReq)
+				decision, budgetRelease, budgetErr = leaseGate.Acquire(ctx, budgetReq)
 				if budgetRelease == nil {
 					budgetRelease = func() {}
 				}
 			} else {
-				decision, err = gate.Evaluate(ctx, budgetReq)
+				decision, budgetErr = gate.Evaluate(ctx, budgetReq)
 			}
-			if err != nil {
+			if budgetErr != nil {
 				releaseBudget()
-				return Result{}, attempts, Failure(FailureBudget, errors.Join(ErrBudgetPolicyUnavailable, err))
+				return Result{}, attempts, Failure(FailureBudget, errors.Join(ErrBudgetPolicyUnavailable, budgetErr))
 			}
 			decision = normalizeBudgetDecision(decision)
 			switch decision.Outcome {
 			case BudgetContinue:
 			case BudgetFallback:
 				releaseBudget()
-				attempts = append(attempts, budgetAttempt(index+1, candidate.Runtime, provider, model, ErrBudgetExhausted, decision.Reason))
+				attempts = append(attempts, budgetAttempt(index+1, candidate.Runtime, provider, model, &routingDecision, ErrBudgetExhausted, decision.Reason))
 				continue
 			case BudgetPark:
 				releaseBudget()
-				attempt := budgetAttempt(index+1, candidate.Runtime, provider, model, ErrBudgetExhausted, decision.Reason)
+				attempt := budgetAttempt(index+1, candidate.Runtime, provider, model, &routingDecision, ErrBudgetExhausted, decision.Reason)
 				return attempt.Result, append(attempts, attempt), attempt.Err
 			case BudgetEscalate:
 				releaseBudget()
-				attempt := budgetAttempt(index+1, candidate.Runtime, provider, model, ErrBudgetApprovalRequired, decision.Reason)
+				attempt := budgetAttempt(index+1, candidate.Runtime, provider, model, &routingDecision, ErrBudgetApprovalRequired, decision.Reason)
 				return attempt.Result, append(attempts, attempt), attempt.Err
 			}
 		}
 
-		attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Provider: provider, Model: model}
+		attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Provider: provider, Model: model, RoutingDecision: &routingDecision}
 		if observer != nil {
 			if err := observer.AttemptStarted(ctx, attempt); err != nil {
 				releaseErr := releaseNonExecuted()
@@ -250,19 +276,20 @@ func (r *Registry) Cancel(ctx context.Context, runtimeName, runID string, sequen
 	return adapter.Cancel(ctx, scopedRunID(runID, sequence))
 }
 
-func budgetAttempt(sequence int, runtimeName, provider, model string, base error, reason string) Attempt {
+func budgetAttempt(sequence int, runtimeName, provider, model string, routing *RoutingDecision, base error, reason string) Attempt {
 	err := base
 	if strings.TrimSpace(reason) != "" {
 		err = fmt.Errorf("%w: %s", base, strings.TrimSpace(reason))
 	}
 	return Attempt{
-		Sequence:     sequence,
-		Runtime:      runtimeName,
-		Provider:     provider,
-		Model:        model,
-		FailureClass: FailureBudget,
-		Result:       Result{Runtime: runtimeName, Model: model, Outcome: OutcomeUnavailable, ExitCode: -1},
-		Err:          Failure(FailureBudget, err),
+		Sequence:        sequence,
+		Runtime:         runtimeName,
+		Provider:        provider,
+		Model:           model,
+		RoutingDecision: routing,
+		FailureClass:    FailureBudget,
+		Result:          Result{Runtime: runtimeName, Model: model, Outcome: OutcomeUnavailable, ExitCode: -1},
+		Err:             Failure(FailureBudget, err),
 	}
 }
 
