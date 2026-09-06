@@ -50,6 +50,7 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/runs/{id}", h.authorize(http.HandlerFunc(h.run)))
 	mux.Handle("GET /api/v1/runs/{id}/evidence", h.authorize(http.HandlerFunc(h.evidence)))
 	mux.Handle("GET /api/v1/workers", h.authorize(http.HandlerFunc(h.workers)))
+	h.RegisterRuntimeUsage(mux)
 }
 
 func (h Handler) authorize(next http.Handler) http.Handler {
@@ -417,11 +418,4 @@ func writeStoreError(w http.ResponseWriter, err error) {
 
 func writeError(w http.ResponseWriter, status int, code string) {
 	writeJSON(w, status, map[string]string{"error": code})
-}
-
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
 }
