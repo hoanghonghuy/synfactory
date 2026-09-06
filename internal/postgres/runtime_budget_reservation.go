@@ -123,6 +123,43 @@ UPDATE runtime_budget_reservations
 	return nil
 }
 
+func (s *Store) ResolveRuntimeBudgetReservationByIdentity(ctx context.Context, repository, runID, provider, model, state string, at time.Time) error {
+	repository = strings.TrimSpace(repository)
+	runID = strings.TrimSpace(runID)
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	state = strings.TrimSpace(state)
+	if repository == "" || runID == "" || provider == "" || model == "" {
+		return errors.New("runtime budget reservation identity is required")
+	}
+	if state != RuntimeBudgetReservationAccounted && state != RuntimeBudgetReservationReleased {
+		return errors.New("runtime budget reservation terminal state must be accounted or released")
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	result, err := s.db.ExecContext(ctx, `
+UPDATE runtime_budget_reservations
+   SET state = $5,
+       resolved_at = $6
+ WHERE repository = $1
+   AND run_id = $2
+   AND provider = $3
+   AND model = $4
+   AND state = 'active'`, repository, runID, provider, model, state, at.UTC())
+	if err != nil {
+		return fmt.Errorf("resolve runtime budget reservation by identity: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect runtime budget reservation identity resolution: %w", err)
+	}
+	if rows == 0 {
+		return errors.New("active runtime budget reservation not found")
+	}
+	return nil
+}
+
 func (s *Store) ActiveRuntimeBudgetReservations(ctx context.Context, repository string) ([]RuntimeBudgetReservation, error) {
 	repository = strings.TrimSpace(repository)
 	if repository == "" {
