@@ -15,18 +15,19 @@ const (
 )
 
 type RuntimeBudgetReservation struct {
-	ID         string
-	Repository string
-	WorkflowID string
-	TaskID     string
-	RunID      string
-	Role       string
-	Provider   string
-	Model      string
-	State      string
-	ExpiresAt  time.Time
-	CreatedAt  time.Time
-	ResolvedAt *time.Time
+	ID                  string
+	Repository          string
+	WorkflowID          string
+	TaskID              string
+	RunID               string
+	Role                string
+	Provider            string
+	Model               string
+	ReservedCostMicroUSD int64
+	State               string
+	ExpiresAt           time.Time
+	CreatedAt           time.Time
+	ResolvedAt          *time.Time
 }
 
 func validateRuntimeBudgetReservation(reservation RuntimeBudgetReservation) error {
@@ -37,6 +38,9 @@ func validateRuntimeBudgetReservation(reservation RuntimeBudgetReservation) erro
 		strings.TrimSpace(reservation.Provider) == "" ||
 		strings.TrimSpace(reservation.Model) == "" {
 		return errors.New("runtime budget reservation identity fields are required")
+	}
+	if reservation.ReservedCostMicroUSD <= 0 {
+		return errors.New("runtime budget reservation cost must be positive")
 	}
 	if reservation.ExpiresAt.IsZero() {
 		return errors.New("runtime budget reservation expiry is required")
@@ -67,8 +71,8 @@ func (s *Store) CreateRuntimeBudgetReservation(ctx context.Context, reservation 
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO runtime_budget_reservations (
     id, repository, workflow_id, task_id, run_id, role, provider, model,
-    state, expires_at, created_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10)
+    reserved_cost_microusd, state, expires_at, created_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10, $11)
 ON CONFLICT (id) DO NOTHING`,
 		reservation.ID,
 		reservation.Repository,
@@ -78,6 +82,7 @@ ON CONFLICT (id) DO NOTHING`,
 		reservation.Role,
 		reservation.Provider,
 		reservation.Model,
+		reservation.ReservedCostMicroUSD,
 		reservation.ExpiresAt,
 		reservation.CreatedAt,
 	)
@@ -125,7 +130,7 @@ func (s *Store) ActiveRuntimeBudgetReservations(ctx context.Context, repository 
 	}
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, repository, workflow_id, task_id, run_id, role, provider, model,
-       state, expires_at, created_at, resolved_at
+       reserved_cost_microusd, state, expires_at, created_at, resolved_at
   FROM runtime_budget_reservations
  WHERE repository = $1
    AND state = 'active'
@@ -147,6 +152,7 @@ SELECT id, repository, workflow_id, task_id, run_id, role, provider, model,
 			&reservation.Role,
 			&reservation.Provider,
 			&reservation.Model,
+			&reservation.ReservedCostMicroUSD,
 			&reservation.State,
 			&reservation.ExpiresAt,
 			&reservation.CreatedAt,
