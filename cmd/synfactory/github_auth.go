@@ -1,25 +1,41 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/hoanghonghuy/synfactory/internal/config"
 	githubfactory "github.com/hoanghonghuy/synfactory/internal/github"
+	"github.com/hoanghonghuy/synfactory/internal/secrets"
 )
 
 func configuredGitHubClient(cfg config.Config) (*githubfactory.Client, bool, error) {
+	provider, err := configuredSecretProvider()
+	if err != nil {
+		return nil, false, err
+	}
+
 	switch cfg.GitHubAuthMode {
 	case "pat":
-		if strings.TrimSpace(cfg.GitHubToken) == "" {
+		value, err := provider.Resolve(context.Background(), "github/token")
+		if isSecretNotFound(err) {
 			return nil, false, nil
 		}
-		return githubfactory.NewClient(cfg.GitHubAPIURL, cfg.GitHubToken, nil), true, nil
-	case "app":
-		privateKey, err := os.ReadFile(cfg.GitHubAppPrivateKeyFile)
 		if err != nil {
-			return nil, false, fmt.Errorf("read github app private key file: %w", err)
+			return nil, false, fmt.Errorf("resolve github token: %w", err)
+		}
+		token := strings.TrimSpace(string(value.CloneBytes()))
+		if token == "" {
+			return nil, false, nil
+		}
+		return githubfactory.NewClient(cfg.GitHubAPIURL, token, nil), true, nil
+	case "app":
+		privateKey, err := resolveGitHubAppPrivateKey(provider, cfg.GitHubAppPrivateKeyFile)
+		if err != nil {
+			return nil, false, err
 		}
 		source, err := githubfactory.NewAppRepositoryTokenSource(cfg.GitHubAPIURL, cfg.GitHubAppID, privateKey, nil)
 		if err != nil {
@@ -29,4 +45,23 @@ func configuredGitHubClient(cfg config.Config) (*githubfactory.Client, bool, err
 	default:
 		return nil, false, fmt.Errorf("unsupported github auth mode %q", cfg.GitHubAuthMode)
 	}
+}
+
+func resolveGitHubAppPrivateKey(provider secrets.Provider, legacyFile string) ([]byte, error) {
+	value, err := provider.Resolve(context.Background(), "github/app-private-key")
+	if err == nil {
+		privateKey := value.CloneBytes()
+		if len(bytes.TrimSpace(privateKey)) == 0 {
+			return nil, fmt.Errorf("github app private key secret is empty")
+		}
+		return privateKey, nil
+	}
+	if !isSecretNotFound(err) {
+		return nil, fmt.Errorf("resolve github app private key: %w", err)
+	}
+	privateKey, err := os.ReadFile(legacyFile)
+	if err != nil {
+		return nil, fmt.Errorf("read github app private key file: %w", err)
+	}
+	return privateKey, nil
 }
