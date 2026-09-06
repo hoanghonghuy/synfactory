@@ -1,12 +1,12 @@
 import { createApp, nextTick } from 'vue'
-import App from './App.vue'
+import AuthGate from './AuthGate.vue'
 import AttentionInbox from './AttentionInbox.vue'
 import RuntimeUsageDock from './RuntimeUsageDock.vue'
 import TerminalDock from './TerminalDock.vue'
 import './style.css'
 import './mobile-tables.css'
 
-createApp(App).mount('#app')
+createApp(AuthGate).mount('#app')
 
 function labelMobileTableCells(): void {
   document.querySelectorAll<HTMLTableElement>('.table-wrap table').forEach((table) => {
