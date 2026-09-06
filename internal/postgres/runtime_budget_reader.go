@@ -178,11 +178,44 @@ func (s *Store) runtimeBudgetSpentMicroUSD(ctx context.Context, policy RuntimeBu
 		return 0, fmt.Errorf("unsupported runtime budget policy scope %q", policy.Scope)
 	}
 
-	var spent int64
-	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&spent); err != nil {
+	var ledgerSpent int64
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&ledgerSpent); err != nil {
 		return 0, fmt.Errorf("query runtime budget usage: %w", err)
 	}
-	return spent, nil
+	reserved, err := s.runtimeBudgetReservedMicroUSD(ctx, policy, request)
+	if err != nil {
+		return 0, err
+	}
+	return ledgerSpent + reserved, nil
+}
+
+func (s *Store) runtimeBudgetReservedMicroUSD(ctx context.Context, policy RuntimeBudgetPolicy, request runtimepolicy.BudgetRequest) (int64, error) {
+	var query string
+	var args []any
+	repository := strings.TrimSpace(request.Repository)
+
+	switch policy.Scope {
+	case RuntimeBudgetScopeRepositoryDay:
+		query = `SELECT COALESCE(SUM(reserved_cost_microusd), 0) FROM runtime_budget_reservations WHERE repository = $1 AND state = 'active'`
+		args = []any{repository}
+	case RuntimeBudgetScopeRoleDay:
+		query = `SELECT COALESCE(SUM(reserved_cost_microusd), 0) FROM runtime_budget_reservations WHERE repository = $1 AND role = $2 AND state = 'active'`
+		args = []any{repository, strings.TrimSpace(request.Role)}
+	case RuntimeBudgetScopeProviderDay:
+		query = `SELECT COALESCE(SUM(reserved_cost_microusd), 0) FROM runtime_budget_reservations WHERE repository = $1 AND provider = $2 AND state = 'active'`
+		args = []any{repository, strings.TrimSpace(request.Provider)}
+	case RuntimeBudgetScopeWorkflowMax:
+		query = `SELECT COALESCE(SUM(reserved_cost_microusd), 0) FROM runtime_budget_reservations WHERE repository = $1 AND workflow_id = $2 AND state = 'active'`
+		args = []any{repository, strings.TrimSpace(request.WorkflowID)}
+	default:
+		return 0, fmt.Errorf("unsupported runtime budget policy scope %q", policy.Scope)
+	}
+
+	var reserved int64
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&reserved); err != nil {
+		return 0, fmt.Errorf("query active runtime budget reservations: %w", err)
+	}
+	return reserved, nil
 }
 
 func (s *Store) runtimeBudgetOverrideAuthorized(ctx context.Context, policyID string, request runtimepolicy.BudgetRequest) (bool, error) {
