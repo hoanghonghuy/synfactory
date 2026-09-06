@@ -50,6 +50,7 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/runs/{id}", h.authorize(http.HandlerFunc(h.run)))
 	mux.Handle("GET /api/v1/runs/{id}/evidence", h.authorize(http.HandlerFunc(h.evidence)))
 	mux.Handle("GET /api/v1/workers", h.authorize(http.HandlerFunc(h.workers)))
+	h.RegisterRuntimeUsage(mux)
 }
 
 func (h Handler) authorize(next http.Handler) http.Handler {

@@ -62,6 +62,9 @@ func (b RequestBuilder) Build(_ context.Context, job domain.Job, repository post
 		Permissions: workflow.PermissionsForRole(job.Role),
 		Metadata: map[string]string{
 			"workflow_action":  actionString(action),
+			"workflow_id":      jobMetadataString(job.Metadata, "workflow_id"),
+			"task_id":          defaultString(jobMetadataString(job.Metadata, "task_id"), job.Subject),
+			"job_id":           job.ID,
 			"repository_id":    repository.ID,
 			"subject":          job.Subject,
 			"workspace_mode":   defaultString(cfg.WorkspaceMode, "worktree"),
@@ -110,6 +113,18 @@ func decodeExecutionConfig(raw json.RawMessage) (repositoryExecutionConfig, erro
 		return repositoryExecutionConfig{}, fmt.Errorf("decode repository execution config: %w", err)
 	}
 	return cfg, nil
+}
+
+func jobMetadataString(raw json.RawMessage, key string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var values map[string]any
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return ""
+	}
+	value, _ := values[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func rolePrompt(job domain.Job, repository postgres.Repository, action workflow.ActionKind) string {

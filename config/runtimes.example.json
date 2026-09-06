@@ -3,36 +3,42 @@
     "codex-primary": {
       "kind": "codex",
       "binary": "codex",
-      "secret_env": ["OPENAI_API_KEY"]
+      "secret_env": ["OPENAI_API_KEY"],
+      "routing_capability_score": 85
     },
     "cursor-primary": {
       "kind": "cursor",
       "binary": "cursor-agent",
       "secret_env": ["CURSOR_API_KEY"],
-      "auto_approve": false
+      "auto_approve": false,
+      "routing_capability_score": 80
     },
     "antigravity-primary": {
       "kind": "antigravity",
       "binary": "agy",
-      "auto_approve": false
+      "auto_approve": false,
+      "routing_capability_score": 70
     },
     "claude-review": {
       "kind": "claude",
       "binary": "claude",
       "secret_env": ["ANTHROPIC_API_KEY"],
-      "auto_approve": false
+      "auto_approve": false,
+      "routing_capability_score": 90
     },
     "opencode-fallback": {
       "kind": "opencode",
       "binary": "opencode",
-      "auto_approve": false
+      "auto_approve": false,
+      "routing_capability_score": 55
     },
     "router-fallback": {
       "kind": "openai_compatible",
       "base_url": "http://host.docker.internal:20128/v1",
       "api_style": "responses",
       "api_key_env": "SYNFACTORY_ROUTER_API_KEY",
-      "model": "replace-with-router-model"
+      "model": "replace-with-router-model",
+      "routing_capability_score": 50
     }
   },
   "roles": {
@@ -41,14 +47,16 @@
         {"runtime": "antigravity-primary"},
         {"runtime": "router-fallback"}
       ],
-      "fallback_on": ["unavailable", "transient"]
+      "fallback_on": ["unavailable", "transient"],
+      "dynamic_routing": true
     },
     "team_lead": {
       "chain": [
         {"runtime": "codex-primary"},
         {"runtime": "claude-review"}
       ],
-      "fallback_on": ["unavailable", "transient"]
+      "fallback_on": ["unavailable", "transient"],
+      "dynamic_routing": true
     },
     "developer": {
       "chain": [
@@ -56,21 +64,24 @@
         {"runtime": "codex-primary"},
         {"runtime": "opencode-fallback"}
       ],
-      "fallback_on": ["unavailable", "transient", "timeout"]
+      "fallback_on": ["unavailable", "transient", "timeout"],
+      "dynamic_routing": true
     },
     "reviewer": {
       "chain": [
         {"runtime": "claude-review"},
         {"runtime": "codex-primary"}
       ],
-      "fallback_on": ["unavailable", "transient"]
+      "fallback_on": ["unavailable", "transient"],
+      "dynamic_routing": true
     },
     "ci_guardian": {
       "chain": [
         {"runtime": "codex-primary"},
         {"runtime": "cursor-primary"}
       ],
-      "fallback_on": ["unavailable", "transient", "timeout"]
+      "fallback_on": ["unavailable", "transient", "timeout"],
+      "dynamic_routing": true
     }
   }
 }

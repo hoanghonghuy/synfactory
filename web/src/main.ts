@@ -1,6 +1,7 @@
 import { createApp, nextTick } from 'vue'
 import AuthGate from './AuthGate.vue'
 import AttentionInbox from './AttentionInbox.vue'
+import RuntimeUsageDock from './RuntimeUsageDock.vue'
 import TerminalDock from './TerminalDock.vue'
 import './style.css'
 import './mobile-tables.css'
@@ -26,6 +27,11 @@ const attentionRoot = document.createElement('div')
 attentionRoot.id = 'attention-root'
 document.body.appendChild(attentionRoot)
 createApp(AttentionInbox).mount(attentionRoot)
+
+const usageRoot = document.createElement('div')
+usageRoot.id = 'runtime-usage-root'
+document.body.appendChild(usageRoot)
+createApp(RuntimeUsageDock).mount(usageRoot)
 
 const terminalRoot = document.createElement('div')
 terminalRoot.id = 'terminal-root'

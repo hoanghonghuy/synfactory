@@ -34,6 +34,7 @@ const (
 	FailurePermanent   FailureClass = "permanent"
 	FailureTimeout     FailureClass = "timeout"
 	FailureCanceled    FailureClass = "canceled"
+	FailureBudget      FailureClass = "budget"
 )
 
 var (
@@ -79,6 +80,13 @@ type Request struct {
 	Sandbox     SandboxSpec
 }
 
+type Usage struct {
+	RequestCount int64
+	InputTokens  int64
+	OutputTokens int64
+	RuntimeMS    int64
+}
+
 type Result struct {
 	Runtime     string
 	Model       string
@@ -90,17 +98,20 @@ type Result struct {
 	Diagnostics string
 	Artifacts   []string
 	Events      []Event
+	Usage       Usage
 	StartedAt   time.Time
 	FinishedAt  time.Time
 }
 
 type Attempt struct {
-	Sequence     int
-	Runtime      string
-	Model        string
-	FailureClass FailureClass
-	Result       Result
-	Err          error
+	Sequence        int
+	Runtime         string
+	Provider        string
+	Model           string
+	RoutingDecision *RoutingDecision
+	FailureClass    FailureClass
+	Result          Result
+	Err             error
 }
 
 type Observer interface {
