@@ -53,6 +53,21 @@ func TestFileProviderKeepsResolutionInsideConfiguredRoot(t *testing.T) {
 	}
 }
 
+func TestFileProviderRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	outsideSecret := filepath.Join(outside, "token")
+	if err := os.WriteFile(outsideSecret, []byte("outside-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := (FileProvider{Root: root}).Resolve(context.Background(), "escape/token"); err == nil {
+		t.Fatal("symlink escape unexpectedly resolved")
+	}
+}
+
 func TestProvidersClassifyMissingSecrets(t *testing.T) {
 	if _, err := (EnvProvider{Prefix: "SYNFACTORY_SECRET_"}).Resolve(context.Background(), "definitely/missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("env missing error = %v", err)
