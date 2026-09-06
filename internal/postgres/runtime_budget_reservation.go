@@ -160,6 +160,34 @@ UPDATE runtime_budget_reservations
 	return nil
 }
 
+// ReleaseRuntimeBudgetReservationByIdentity is intentionally idempotent. It is
+// only for paths that can prove the provider was not invoked (for example, a
+// pre-run health probe failure). Unknown outcomes must never call this method.
+func (s *Store) ReleaseRuntimeBudgetReservationByIdentity(ctx context.Context, repository, runID, provider, model string, at time.Time) error {
+	repository = strings.TrimSpace(repository)
+	runID = strings.TrimSpace(runID)
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if repository == "" || runID == "" || provider == "" || model == "" {
+		return errors.New("runtime budget reservation identity is required")
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE runtime_budget_reservations
+   SET state = 'released',
+       resolved_at = $5
+ WHERE repository = $1
+   AND run_id = $2
+   AND provider = $3
+   AND model = $4
+   AND state = 'active'`, repository, runID, provider, model, at.UTC()); err != nil {
+		return fmt.Errorf("release runtime budget reservation by identity: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) ActiveRuntimeBudgetReservations(ctx context.Context, repository string) ([]RuntimeBudgetReservation, error) {
 	repository = strings.TrimSpace(repository)
 	if repository == "" {
