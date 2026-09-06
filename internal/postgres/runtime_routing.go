@@ -24,6 +24,7 @@ func (s *Store) RuntimeRoutingMetrics(ctx context.Context, request runtimepolicy
 SELECT COUNT(*),
        COUNT(*) FILTER (WHERE r.status = 'succeeded'),
        COUNT(*) FILTER (WHERE r.status <> 'succeeded'),
+       COUNT(*) FILTER (WHERE r.attempt > 1),
        COALESCE(AVG(EXTRACT(EPOCH FROM (r.finished_at - r.started_at)) * 1000)::BIGINT, 0),
        COALESCE(AVG(COALESCE((
            SELECT SUM(u.cost_microusd)
@@ -43,6 +44,7 @@ SELECT COUNT(*),
 		&metrics.Attempts,
 		&metrics.Successes,
 		&metrics.Failures,
+		&metrics.Rework,
 		&metrics.AverageRuntimeMS,
 		&metrics.AverageCostMicroUSD,
 	); err != nil {
