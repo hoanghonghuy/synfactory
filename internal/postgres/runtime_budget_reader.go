@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	runtimepolicy "github.com/hoanghonghuy/synfactory/internal/runtime"
@@ -22,15 +23,83 @@ func (s *Store) BudgetSnapshot(ctx context.Context, request runtimepolicy.Budget
 	if err != nil {
 		return runtimepolicy.BudgetSnapshot{}, err
 	}
+	return s.budgetSnapshotWithPolicies(ctx, request, policies)
+}
 
+// AcquireBudgetSnapshot serializes attempts that are subject to at least one
+// matching hard budget. The repository-scoped advisory lock is intentionally
+// held until the caller releases it after durable usage accounting, so another
+// worker cannot pass the same hard cap against a stale ledger snapshot.
+func (s *Store) AcquireBudgetSnapshot(ctx context.Context, request runtimepolicy.BudgetRequest) (runtimepolicy.BudgetSnapshot, func(), error) {
+	repository := strings.TrimSpace(request.Repository)
+	if repository == "" {
+		return runtimepolicy.BudgetSnapshot{}, nil, fmt.Errorf("runtime budget repository is required")
+	}
+
+	policies, err := s.RuntimeBudgetPolicies(ctx, repository)
+	if err != nil {
+		return runtimepolicy.BudgetSnapshot{}, nil, err
+	}
+	if !runtimeBudgetHasMatchingHardPolicy(policies, request) {
+		snapshot, err := s.budgetSnapshotWithPolicies(ctx, request, policies)
+		return snapshot, func() {}, err
+	}
+
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return runtimepolicy.BudgetSnapshot{}, nil, fmt.Errorf("reserve runtime budget connection: %w", err)
+	}
+	lockKey := "runtime-budget:" + repository
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+		_ = conn.Close()
+		return runtimepolicy.BudgetSnapshot{}, nil, fmt.Errorf("acquire runtime budget lock: %w", err)
+	}
+
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock(hashtextextended($1, 0))`, lockKey)
+			_ = conn.Close()
+		})
+	}
+
+	// A contender may have waited behind another attempt. Reload policy state and
+	// spend after acquiring the lock so the decision observes that attempt's
+	// accounting before admitting more work.
+	policies, err = s.RuntimeBudgetPolicies(ctx, repository)
+	if err != nil {
+		release()
+		return runtimepolicy.BudgetSnapshot{}, nil, err
+	}
+	snapshot, err := s.budgetSnapshotWithPolicies(ctx, request, policies)
+	if err != nil {
+		release()
+		return runtimepolicy.BudgetSnapshot{}, nil, err
+	}
+	return snapshot, release, nil
+}
+
+func runtimeBudgetHasMatchingHardPolicy(policies []RuntimeBudgetPolicy, request runtimepolicy.BudgetRequest) bool {
+	for _, policy := range policies {
+		if policy.HardLimitMicroUSD > 0 && runtimeBudgetPolicyMatchesRequest(policy, request) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) budgetSnapshotWithPolicies(ctx context.Context, request runtimepolicy.BudgetRequest, policies []RuntimeBudgetPolicy) (runtimepolicy.BudgetSnapshot, error) {
 	var snapshot runtimepolicy.BudgetSnapshot
 	var hardExceededPolicies []string
+	now := time.Now().UTC()
 	for _, policy := range policies {
 		if !runtimeBudgetPolicyMatchesRequest(policy, request) {
 			continue
 		}
 
-		spent, err := s.runtimeBudgetSpentMicroUSD(ctx, policy, request, time.Now().UTC())
+		spent, err := s.runtimeBudgetSpentMicroUSD(ctx, policy, request, now)
 		if err != nil {
 			return runtimepolicy.BudgetSnapshot{}, err
 		}
