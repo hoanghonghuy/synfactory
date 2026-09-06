@@ -21,17 +21,19 @@ const (
 )
 
 type RuntimeConfig struct {
-	Kind         ProviderKind      `json:"kind"`
-	Binary       string            `json:"binary,omitempty"`
-	Model        string            `json:"model,omitempty"`
-	BaseURL      string            `json:"base_url,omitempty"`
-	APIStyle     string            `json:"api_style,omitempty"`
-	APIKeyEnv    string            `json:"api_key_env,omitempty"`
-	SecretEnv    []string          `json:"secret_env,omitempty"`
-	Env          map[string]string `json:"env,omitempty"`
-	ExtraArgs    []string          `json:"extra_args,omitempty"`
-	AutoApprove  bool              `json:"auto_approve,omitempty"`
-	ProbeTimeout Duration          `json:"probe_timeout,omitempty"`
+	Kind                   ProviderKind      `json:"kind"`
+	Binary                 string            `json:"binary,omitempty"`
+	Model                  string            `json:"model,omitempty"`
+	BaseURL                string            `json:"base_url,omitempty"`
+	APIStyle               string            `json:"api_style,omitempty"`
+	APIKeyEnv              string            `json:"api_key_env,omitempty"`
+	SecretEnv              []string          `json:"secret_env,omitempty"`
+	Env                    map[string]string `json:"env,omitempty"`
+	ExtraArgs              []string          `json:"extra_args,omitempty"`
+	AutoApprove             bool              `json:"auto_approve,omitempty"`
+	ProbeTimeout            Duration          `json:"probe_timeout,omitempty"`
+	BudgetInputTokenLimit   int64             `json:"budget_input_token_limit,omitempty"`
+	BudgetOutputTokenLimit  int64             `json:"budget_output_token_limit,omitempty"`
 }
 
 type CandidateConfig struct {
@@ -101,6 +103,9 @@ func (c Config) Validate() error {
 	for name, runtimeCfg := range c.Runtimes {
 		if strings.TrimSpace(name) == "" {
 			return errors.New("runtime name cannot be empty")
+		}
+		if runtimeCfg.BudgetInputTokenLimit < 0 || runtimeCfg.BudgetOutputTokenLimit < 0 {
+			return fmt.Errorf("runtime %q budget token limits must be non-negative", name)
 		}
 		switch runtimeCfg.Kind {
 		case ProviderCodex, ProviderCursor, ProviderAntigravity, ProviderClaude, ProviderOpenCode:
