@@ -15,16 +15,24 @@ var ErrNotFound = errors.New("secret not found")
 const maxFileSecretBytes = 1 << 20
 
 type Value struct {
-	Bytes    []byte
-	Provider string
+	bytes    []byte
+	Provider string `json:"provider"`
+}
+
+func newValue(value []byte, provider string) Value {
+	return Value{bytes: append([]byte(nil), value...), Provider: provider}
 }
 
 func (v Value) String() string {
 	return "[REDACTED]"
 }
 
+func (v Value) GoString() string {
+	return "secrets.Value{[REDACTED]}"
+}
+
 func (v Value) CloneBytes() []byte {
-	return append([]byte(nil), v.Bytes...)
+	return append([]byte(nil), v.bytes...)
 }
 
 type Provider interface {
@@ -44,7 +52,7 @@ func (p EnvProvider) Resolve(_ context.Context, logicalName string) (Value, erro
 	if !ok {
 		return Value{}, fmt.Errorf("%w: %s", ErrNotFound, logicalName)
 	}
-	return Value{Bytes: []byte(value), Provider: "env"}, nil
+	return newValue([]byte(value), "env"), nil
 }
 
 type FileProvider struct {
@@ -89,7 +97,7 @@ func (p FileProvider) Resolve(_ context.Context, logicalName string) (Value, err
 	if len(value) > maxFileSecretBytes {
 		return Value{}, errors.New("secret file exceeds size limit")
 	}
-	return Value{Bytes: value, Provider: "file"}, nil
+	return newValue(value, "file"), nil
 }
 
 func normalizeLogicalName(value string) (string, error) {
