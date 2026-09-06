@@ -20,6 +20,7 @@ type RoutingMetrics struct {
 	Attempts            int64
 	Successes           int64
 	Failures            int64
+	Rework              int64
 	AverageRuntimeMS    int64
 	AverageCostMicroUSD int64
 }
@@ -37,6 +38,7 @@ type RoutingDecision struct {
 	Attempts            int64  `json:"attempts"`
 	Successes           int64  `json:"successes"`
 	Failures            int64  `json:"failures"`
+	Rework              int64  `json:"rework"`
 	AverageRuntimeMS    int64  `json:"average_runtime_ms"`
 	AverageCostMicroUSD int64  `json:"average_cost_microusd"`
 }
@@ -92,12 +94,13 @@ func routingDecision(originalOrder int, complexity, capability int64, metrics Ro
 		capability = 100
 	}
 	// Operator configuration supplies capability; durable history supplies quality,
-	// latency and cost. Chain order remains a small deterministic tie-break only.
+	// latency, retry rework and cost. Chain order remains a deterministic tie-break.
 	score := capability*complexity*10_000 + int64(10_000-originalOrder)
 	if metrics.Attempts > 0 {
 		successBasisPoints := metrics.Successes * 10_000 / metrics.Attempts
 		score += successBasisPoints * 100
 		score -= metrics.Failures * 1_000
+		score -= metrics.Rework * 750
 	}
 	score -= metrics.AverageRuntimeMS / 100
 	score -= metrics.AverageCostMicroUSD / 1_000
@@ -110,6 +113,7 @@ func routingDecision(originalOrder int, complexity, capability int64, metrics Ro
 		Attempts:            metrics.Attempts,
 		Successes:           metrics.Successes,
 		Failures:            metrics.Failures,
+		Rework:              metrics.Rework,
 		AverageRuntimeMS:    metrics.AverageRuntimeMS,
 		AverageCostMicroUSD: metrics.AverageCostMicroUSD,
 	}
