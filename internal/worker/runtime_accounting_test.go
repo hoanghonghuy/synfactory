@@ -14,10 +14,10 @@ import (
 
 type accountingStore struct {
 	fakeStore
-	pricing    postgres.RuntimePricing
-	pricingErr error
-	recordErr  error
-	usage      []postgres.RuntimeUsage
+	pricing		postgres.RuntimePricing
+	pricingErr	error
+	recordErr	error
+	usage		[]postgres.RuntimeUsage
 }
 
 func (s *accountingStore) ResolveRuntimePricing(context.Context, string, string, time.Time) (postgres.RuntimePricing, error) {
@@ -81,8 +81,8 @@ func TestRunObserverAccountingFailureDoesNotReplaySuccessfulAttempt(t *testing.T
 	finished := time.Date(2026, 9, 6, 5, 0, 0, 0, time.UTC)
 	store := &accountingStore{pricingErr: errors.New("pricing temporarily unavailable")}
 	observer := &runObserver{
-		store: store,
-		job: domain.Job{ID: "job-35", Attempt: 1, Role: domain.RoleDev, Subject: "35"},
+		store:      store,
+		job:        domain.Job{ID: "job-35", Attempt: 1, Role: domain.RoleDev, Subject: "35"},
 		repository: postgres.Repository{FullName: "owner/repo"},
 		now:        func() time.Time { return finished },
 	}
