@@ -48,7 +48,7 @@ func budgetRequest(request Request, runtimeName, provider, model string, runtime
 		Repository:       strings.TrimSpace(request.Repository),
 		WorkflowID:       strings.TrimSpace(request.Metadata["workflow_id"]),
 		TaskID:           strings.TrimSpace(request.Metadata["task_id"]),
-		RunID:            strings.TrimSpace(request.RunID),
+		RunID:            budgetRunID(request),
 		Role:             strings.TrimSpace(request.Role),
 		Runtime:          strings.TrimSpace(runtimeName),
 		Provider:         strings.TrimSpace(provider),
@@ -56,6 +56,19 @@ func budgetRequest(request Request, runtimeName, provider, model string, runtime
 		InputTokenLimit:  runtimeCfg.BudgetInputTokenLimit,
 		OutputTokenLimit: runtimeCfg.BudgetOutputTokenLimit,
 	}
+}
+
+func budgetRunID(request Request) string {
+	runID := strings.TrimSpace(request.RunID)
+	attempt := strings.TrimSpace(request.Metadata["job_attempt"])
+	jobID := strings.TrimSpace(request.Metadata["job_id"])
+	if runID == "" || attempt == "" || jobID == "" {
+		return runID
+	}
+	// Registry attempt scoping has already appended the runtime sequence to RunID.
+	// Add the durable job attempt so retries of the same job cannot collide with
+	// an unresolved reservation from an earlier execution attempt.
+	return runID + ".attempt-" + attempt
 }
 
 func normalizeBudgetDecision(decision BudgetDecision) BudgetDecision {
