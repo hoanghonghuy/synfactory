@@ -7,6 +7,7 @@ CREATE TABLE runtime_budget_reservations (
     role TEXT NOT NULL,
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
+    reserved_cost_microusd BIGINT NOT NULL CHECK (reserved_cost_microusd > 0),
     state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'accounted', 'released')),
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
