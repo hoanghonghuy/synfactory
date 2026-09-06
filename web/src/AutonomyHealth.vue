@@ -3,30 +3,71 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Overview } from './types'
 
 const token = ref('')
+const authorized = ref(false)
 const open = ref(false)
 const overview = ref<Overview | null>(null)
 const error = ref('')
 const loading = ref(false)
-let tokenTimer = 0
+let authTimer = 0
 let refreshTimer = 0
 
-function syncToken(): void {
-  const next = sessionStorage.getItem('synfactory.operator.token') ?? ''
-  if (next !== token.value) {
-    token.value = next
-    if (!next) {
+function authHeaders(): HeadersInit {
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (token.value) headers.Authorization = `Bearer ${token.value}`
+  return headers
+}
+
+async function syncAuth(): Promise<void> {
+  const nextToken = sessionStorage.getItem('synfactory.operator.token') ?? ''
+  if (nextToken) {
+    const changed = nextToken !== token.value || !authorized.value
+    token.value = nextToken
+    authorized.value = true
+    if (changed) {
+      overview.value = null
+      error.value = ''
+    }
+    return
+  }
+
+  token.value = ''
+  try {
+    const response = await fetch('/api/v1/auth/session', {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+    const nextAuthorized = response.ok
+    const changed = nextAuthorized !== authorized.value
+    authorized.value = nextAuthorized
+    if (!nextAuthorized) {
       overview.value = null
       open.value = false
     }
+    if (changed && nextAuthorized) error.value = ''
+  } catch {
+    authorized.value = false
+    overview.value = null
+    open.value = false
   }
 }
 
 async function refresh(): Promise<void> {
-  if (!token.value || loading.value) return
+  if (!authorized.value || loading.value) return
   loading.value = true
   error.value = ''
   try {
-    const response = await fetch('/api/v1/overview', { headers: { Authorization: `Bearer ${token.value}` } })
+    const response = await fetch('/api/v1/overview', {
+      headers: authHeaders(),
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
+    if (response.status === 401) {
+      authorized.value = false
+      overview.value = null
+      open.value = false
+      return
+    }
     if (!response.ok) throw new Error(`Autonomy Health unavailable (${response.status})`)
     overview.value = await response.json() as Overview
   } catch (cause) {
@@ -46,22 +87,22 @@ function percent(value?: number): string {
 }
 
 onMounted(() => {
-  syncToken()
-  tokenTimer = window.setInterval(syncToken, 1000)
+  void syncAuth()
+  authTimer = window.setInterval(() => void syncAuth(), 2000)
   refreshTimer = window.setInterval(() => {
     if (open.value && document.visibilityState === 'visible') void refresh()
   }, 5000)
 })
 
 onBeforeUnmount(() => {
-  window.clearInterval(tokenTimer)
+  window.clearInterval(authTimer)
   window.clearInterval(refreshTimer)
 })
 </script>
 
 <template>
-  <button v-if="token && !open" class="health-launch" type="button" @click="showHealth">Autonomy Health</button>
-  <section v-if="token && open" class="health-dock" aria-label="Autonomy Health">
+  <button v-if="authorized && !open" class="health-launch" type="button" @click="showHealth">Autonomy Health</button>
+  <section v-if="authorized && open" class="health-dock" aria-label="Autonomy Health">
     <header>
       <div>
         <small>Last 24 hours</small>
