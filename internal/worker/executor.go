@@ -50,25 +50,25 @@ type VerificationPlanner interface {
 }
 
 type Config struct {
-	ID                string
-	Host              string
-	Capacity          int
-	PollInterval      time.Duration
-	LeaseDuration     time.Duration
-	HeartbeatInterval time.Duration
-	DefaultTimeout    time.Duration
-	RetryBase         time.Duration
+	ID				string
+	Host				string
+	Capacity			int
+	PollInterval		time.Duration
+	LeaseDuration		time.Duration
+	HeartbeatInterval	time.Duration
+	DefaultTimeout		time.Duration
+	RetryBase			time.Duration
 }
 
 type Worker struct {
-	store      Store
-	engine     RuntimeEngine
-	builder    RequestBuilder
-	workspaces workspace.Manager
-	verifier   *verifier.Verifier
-	planner    VerificationPlanner
-	cfg        Config
-	now        func() time.Time
+	store		Store
+	engine		RuntimeEngine
+	builder		RequestBuilder
+	workspaces	workspace.Manager
+	verifier	*verifier.Verifier
+	planner		VerificationPlanner
+	cfg		Config
+	now		func() time.Time
 }
 
 func New(store Store, engine RuntimeEngine, builder RequestBuilder, cfg Config) *Worker {
@@ -313,10 +313,10 @@ func retryDelay(base time.Duration, attempt int) time.Duration {
 }
 
 type runObserver struct {
-	store      Store
-	job        domain.Job
-	repository postgres.Repository
-	now        func() time.Time
+	store		Store
+	job		domain.Job
+	repository	postgres.Repository
+	now		func() time.Time
 }
 
 func (o *runObserver) AttemptStarted(ctx context.Context, attempt runtimefactory.Attempt) error {
@@ -370,21 +370,21 @@ func (o *runObserver) recordRuntimeUsage(ctx context.Context, persistedRunID str
 	}
 	workflowID, taskID := runtimeUsageIdentity(o.job.Metadata, o.job.Subject)
 	entry := postgres.RuntimeUsage{
-		ID:             runtimeUsageID(persistedRunID, provider, model),
-		Repository:     o.repository.FullName,
-		WorkflowID:     workflowID,
-		TaskID:         taskID,
-		RunID:          persistedRunID,
-		Role:           string(o.job.Role),
-		Runtime:        attempt.Runtime,
-		Provider:       provider,
-		Model:          model,
-		PricingVersion: pricing.Version,
-		RequestCount:   usage.RequestCount,
-		InputTokens:    usage.InputTokens,
-		OutputTokens:   usage.OutputTokens,
-		RuntimeMS:      usage.RuntimeMS,
-		RecordedAt:     recordedAt,
+		ID:			runtimeUsageID(persistedRunID, provider, model),
+		Repository:		o.repository.FullName,
+		WorkflowID:		workflowID,
+		TaskID:			taskID,
+		RunID:			persistedRunID,
+		Role:			string(o.job.Role),
+		Runtime:		attempt.Runtime,
+		Provider:		provider,
+		Model:			model,
+		PricingVersion:	pricing.Version,
+		RequestCount:		usage.RequestCount,
+		InputTokens:		usage.InputTokens,
+		OutputTokens:		usage.OutputTokens,
+		RuntimeMS:		usage.RuntimeMS,
+		RecordedAt:		recordedAt,
 	}
 	if err := accounting.RecordRuntimeUsage(ctx, entry); err != nil {
 		slog.Warn("runtime usage accounting failed", "run_id", persistedRunID, "provider", provider, "model", model, "error", err)
