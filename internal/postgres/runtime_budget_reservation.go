@@ -72,8 +72,7 @@ func (s *Store) CreateRuntimeBudgetReservation(ctx context.Context, reservation 
 INSERT INTO runtime_budget_reservations (
     id, repository, workflow_id, task_id, run_id, role, provider, model,
     reserved_cost_microusd, state, expires_at, created_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10, $11)
-ON CONFLICT (id) DO NOTHING`,
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10, $11)`,
 		reservation.ID,
 		reservation.Repository,
 		reservation.WorkflowID,
