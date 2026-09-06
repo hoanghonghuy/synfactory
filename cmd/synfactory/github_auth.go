@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -10,12 +11,25 @@ import (
 )
 
 func configuredGitHubClient(cfg config.Config) (*githubfactory.Client, bool, error) {
+	provider, err := configuredSecretProvider()
+	if err != nil {
+		return nil, false, err
+	}
+
 	switch cfg.GitHubAuthMode {
 	case "pat":
-		if strings.TrimSpace(cfg.GitHubToken) == "" {
+		value, err := provider.Resolve(context.Background(), "github/token")
+		if isSecretNotFound(err) {
 			return nil, false, nil
 		}
-		return githubfactory.NewClient(cfg.GitHubAPIURL, cfg.GitHubToken, nil), true, nil
+		if err != nil {
+			return nil, false, fmt.Errorf("resolve github token: %w", err)
+		}
+		token := strings.TrimSpace(string(value.CloneBytes()))
+		if token == "" {
+			return nil, false, nil
+		}
+		return githubfactory.NewClient(cfg.GitHubAPIURL, token, nil), true, nil
 	case "app":
 		privateKey, err := os.ReadFile(cfg.GitHubAppPrivateKeyFile)
 		if err != nil {
