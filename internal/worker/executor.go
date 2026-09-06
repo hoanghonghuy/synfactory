@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hoanghonghuy/synfactory/internal/domain"
@@ -29,6 +30,11 @@ type Store interface {
 	FinishRun(ctx context.Context, runID, status string, finishedAt time.Time, exitCode *int, summary, sessionID string) (postgres.Run, error)
 	AddEvidence(ctx context.Context, evidence postgres.Evidence) (postgres.Evidence, error)
 	HeartbeatWorker(ctx context.Context, worker postgres.Worker, at time.Time) (postgres.Worker, error)
+}
+
+type runtimeAccountingStore interface {
+	ResolveRuntimePricing(ctx context.Context, provider, model string, at time.Time) (postgres.RuntimePricing, error)
+	RecordRuntimeUsage(ctx context.Context, usage postgres.RuntimeUsage) error
 }
 
 type RuntimeEngine interface {
@@ -175,7 +181,7 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	leaseErr := make(chan error, 1)
 	go w.keepLease(runCtx, job.ID, cancel, leaseErr)
-	observer := &runObserver{store: w.store, job: job, now: w.now}
+	observer := &runObserver{store: w.store, job: job, repository: repository, now: w.now}
 	result, attempts, runErr := w.engine.Execute(runCtx, request, observer)
 	cancel()
 	select {
@@ -263,6 +269,7 @@ func (w *Worker) keepLease(ctx context.Context, jobID string, cancel context.Can
 		}
 	}
 }
+
 func (w *Worker) failJob(ctx context.Context, job domain.Job, runErr error) error {
 	now := w.now()
 	retryAt := now.Add(retryDelay(w.cfg.RetryBase, job.Attempt))
@@ -272,6 +279,7 @@ func (w *Worker) failJob(ctx context.Context, job domain.Job, runErr error) erro
 	}
 	return runErr
 }
+
 func (w *Worker) heartbeatLoop(ctx context.Context) {
 	worker := postgres.Worker{ID: w.cfg.ID, Host: w.cfg.Host, Capacity: w.cfg.Capacity}
 	for {
@@ -289,6 +297,7 @@ func (w *Worker) heartbeatLoop(ctx context.Context) {
 		}
 	}
 }
+
 func retryDelay(base time.Duration, attempt int) time.Duration {
 	if base <= 0 {
 		base = 30 * time.Second
@@ -304,9 +313,10 @@ func retryDelay(base time.Duration, attempt int) time.Duration {
 }
 
 type runObserver struct {
-	store Store
-	job   domain.Job
-	now   func() time.Time
+	store      Store
+	job        domain.Job
+	repository postgres.Repository
+	now        func() time.Time
 }
 
 func (o *runObserver) AttemptStarted(ctx context.Context, attempt runtimefactory.Attempt) error {
@@ -314,6 +324,7 @@ func (o *runObserver) AttemptStarted(ctx context.Context, attempt runtimefactory
 	_, err := o.store.CreateRun(ctx, postgres.Run{ID: runID(o.job.ID, o.job.Attempt, attempt.Sequence), JobID: o.job.ID, Attempt: o.job.Attempt, Sequence: attempt.Sequence, Runtime: attempt.Runtime, Model: attempt.Model, Status: "running", Metadata: metadata})
 	return err
 }
+
 func (o *runObserver) AttemptFinished(ctx context.Context, attempt runtimefactory.Attempt) error {
 	status := runStatus(attempt.Result.Outcome, attempt.Err)
 	exitCode := attempt.Result.ExitCode
@@ -321,14 +332,85 @@ func (o *runObserver) AttemptFinished(ctx context.Context, attempt runtimefactor
 	if summary == "" && attempt.Err != nil {
 		summary = attempt.Err.Error()
 	}
-	runID := runID(o.job.ID, o.job.Attempt, attempt.Sequence)
-	if _, err := o.store.FinishRun(ctx, runID, status, o.now(), &exitCode, summary, attempt.Result.SessionID); err != nil {
+	persistedRunID := runID(o.job.ID, o.job.Attempt, attempt.Sequence)
+	if _, err := o.store.FinishRun(ctx, persistedRunID, status, o.now(), &exitCode, summary, attempt.Result.SessionID); err != nil {
 		return err
 	}
 	evidenceMetadata, _ := json.Marshal(map[string]any{"outcome": attempt.Result.Outcome, "failure_class": attempt.FailureClass, "output": attempt.Result.Output, "diagnostics": attempt.Result.Diagnostics, "events": attempt.Result.Events})
-	_, err := o.store.AddEvidence(ctx, postgres.Evidence{RunID: runID, Kind: "runtime", Name: "normalized-runtime-output", Metadata: evidenceMetadata})
-	return err
+	if _, err := o.store.AddEvidence(ctx, postgres.Evidence{RunID: persistedRunID, Kind: "runtime", Name: "normalized-runtime-output", Metadata: evidenceMetadata}); err != nil {
+		return err
+	}
+	o.recordRuntimeUsage(ctx, persistedRunID, attempt)
+	return nil
 }
+
+func (o *runObserver) recordRuntimeUsage(ctx context.Context, persistedRunID string, attempt runtimefactory.Attempt) {
+	accounting, ok := o.store.(runtimeAccountingStore)
+	if !ok {
+		return
+	}
+	usage := attempt.Result.Usage
+	if usage.RequestCount == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.RuntimeMS == 0 {
+		return
+	}
+	provider := strings.TrimSpace(attempt.Provider)
+	model := strings.TrimSpace(attempt.Model)
+	if provider == "" || model == "" {
+		slog.Warn("runtime usage accounting skipped because provider/model attribution is missing", "run_id", persistedRunID, "runtime", attempt.Runtime)
+		return
+	}
+	recordedAt := attempt.Result.FinishedAt
+	if recordedAt.IsZero() {
+		recordedAt = o.now()
+	}
+	pricing, err := accounting.ResolveRuntimePricing(ctx, provider, model, recordedAt)
+	if err != nil {
+		slog.Warn("runtime usage pricing resolution failed", "run_id", persistedRunID, "provider", provider, "model", model, "error", err)
+		return
+	}
+	workflowID, taskID := runtimeUsageIdentity(o.job.Metadata, o.job.Subject)
+	entry := postgres.RuntimeUsage{
+		ID:             runtimeUsageID(persistedRunID, provider, model),
+		Repository:     o.repository.FullName,
+		WorkflowID:     workflowID,
+		TaskID:         taskID,
+		RunID:          persistedRunID,
+		Role:           string(o.job.Role),
+		Runtime:        attempt.Runtime,
+		Provider:       provider,
+		Model:          model,
+		PricingVersion: pricing.Version,
+		RequestCount:   usage.RequestCount,
+		InputTokens:    usage.InputTokens,
+		OutputTokens:   usage.OutputTokens,
+		RuntimeMS:      usage.RuntimeMS,
+		RecordedAt:     recordedAt,
+	}
+	if err := accounting.RecordRuntimeUsage(ctx, entry); err != nil {
+		slog.Warn("runtime usage accounting failed", "run_id", persistedRunID, "provider", provider, "model", model, "error", err)
+	}
+}
+
+func runtimeUsageIdentity(raw json.RawMessage, fallbackTask string) (string, string) {
+	var values map[string]any
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &values)
+	}
+	workflowID, _ := values["workflow_id"].(string)
+	taskID, _ := values["task_id"].(string)
+	workflowID = strings.TrimSpace(workflowID)
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		taskID = strings.TrimSpace(fallbackTask)
+	}
+	return workflowID, taskID
+}
+
+func runtimeUsageID(persistedRunID, provider, model string) string {
+	sum := sha256.Sum256([]byte(persistedRunID + "\x00" + provider + "\x00" + model))
+	return "usage_" + hex.EncodeToString(sum[:12])
+}
+
 func runStatus(outcome runtimefactory.Outcome, err error) string {
 	if err != nil {
 		switch runtimefactory.ClassifyFailure(err) {
@@ -345,6 +427,7 @@ func runStatus(outcome runtimefactory.Outcome, err error) string {
 	}
 	return "failed"
 }
+
 func runID(jobID string, attempt, sequence int) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d", jobID, attempt, sequence)))
 	return "run_" + hex.EncodeToString(sum[:12])
