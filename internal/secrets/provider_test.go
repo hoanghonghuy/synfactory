@@ -2,9 +2,12 @@ package secrets
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -22,6 +25,18 @@ func TestEnvProviderResolvesLogicalNameWithoutLeakingValue(t *testing.T) {
 	}
 	if got := value.String(); got != "[REDACTED]" {
 		t.Fatalf("String() leaked secret: %q", got)
+	}
+	for _, formatted := range []string{fmt.Sprint(value), fmt.Sprintf("%+v", value), fmt.Sprintf("%#v", value)} {
+		if strings.Contains(formatted, "top-secret") {
+			t.Fatalf("formatted Value leaked secret: %q", formatted)
+		}
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "top-secret") {
+		t.Fatalf("JSON leaked secret: %s", encoded)
 	}
 }
 
