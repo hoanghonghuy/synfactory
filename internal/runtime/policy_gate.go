@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 )
 
 // BudgetSnapshot is a server-owned view of the configured budget state for one
@@ -39,10 +40,24 @@ type BudgetSnapshotLeaser interface {
 	AcquireBudgetSnapshot(ctx context.Context, request BudgetRequest) (BudgetSnapshot, func(), error)
 }
 
+// BudgetReservationReleaser is deliberately narrow: it may only be called when
+// the runtime layer can prove that the provider was not invoked. Unknown or
+// post-provider outcomes must remain reserved until durable accounting resolves
+// them.
+type BudgetReservationReleaser interface {
+	ReleaseRuntimeBudgetReservationByIdentity(ctx context.Context, repository, runID, provider, model string, at time.Time) error
+}
+
 // BudgetLeaseGate is implemented by gates that can keep hard-budget admission
 // serialized until the caller releases the attempt lease.
 type BudgetLeaseGate interface {
 	Acquire(ctx context.Context, request BudgetRequest) (BudgetDecision, func(), error)
+}
+
+// BudgetNonExecutionReleaser is implemented by budget gates that can resolve a
+// reservation after a verified pre-provider failure.
+type BudgetNonExecutionReleaser interface {
+	ReleaseNonExecuted(ctx context.Context, request BudgetRequest) error
 }
 
 type LedgerBudgetGate struct {
@@ -96,6 +111,24 @@ func (g LedgerBudgetGate) Acquire(ctx context.Context, request BudgetRequest) (B
 		return BudgetDecision{}, nil, err
 	}
 	return decision, release, nil
+}
+
+func (g LedgerBudgetGate) ReleaseNonExecuted(ctx context.Context, request BudgetRequest) error {
+	if g.Reader == nil {
+		return ErrBudgetPolicyUnavailable
+	}
+	releaser, ok := g.Reader.(BudgetReservationReleaser)
+	if !ok {
+		return nil
+	}
+	return releaser.ReleaseRuntimeBudgetReservationByIdentity(
+		ctx,
+		strings.TrimSpace(request.Repository),
+		strings.TrimSpace(request.RunID),
+		strings.TrimSpace(request.Provider),
+		strings.TrimSpace(request.Model),
+		time.Now().UTC(),
+	)
 }
 
 func (g LedgerBudgetGate) hasMatchingPolicy(ctx context.Context, request BudgetRequest) (bool, error) {
