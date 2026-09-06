@@ -30,10 +30,10 @@ type RuntimeConfig struct {
 	SecretEnv              []string          `json:"secret_env,omitempty"`
 	Env                    map[string]string `json:"env,omitempty"`
 	ExtraArgs              []string          `json:"extra_args,omitempty"`
-	AutoApprove             bool              `json:"auto_approve,omitempty"`
-	ProbeTimeout            Duration          `json:"probe_timeout,omitempty"`
-	BudgetInputTokenLimit   int64             `json:"budget_input_token_limit,omitempty"`
-	BudgetOutputTokenLimit  int64             `json:"budget_output_token_limit,omitempty"`
+	AutoApprove            bool              `json:"auto_approve,omitempty"`
+	ProbeTimeout           Duration          `json:"probe_timeout,omitempty"`
+	BudgetInputTokenLimit  int64             `json:"budget_input_token_limit,omitempty"`
+	BudgetOutputTokenLimit int64             `json:"budget_output_token_limit,omitempty"`
 }
 
 type CandidateConfig struct {
