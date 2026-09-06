@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hoanghonghuy/synfactory/internal/attention"
+	"github.com/hoanghonghuy/synfactory/internal/authz"
 	"github.com/hoanghonghuy/synfactory/internal/config"
 	"github.com/hoanghonghuy/synfactory/internal/controlcenter"
 	"github.com/hoanghonghuy/synfactory/internal/domain"
@@ -157,14 +158,22 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 		wake = bus.all
 	}
 	metrics := operations.Handler{Store: store, WorkerStaleAfter: cfg.WorkerStaleAfter}
-	operatorAPI := controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter}
+	authorizer := authz.HybridAuthorizer{
+		Session: authz.SessionAuthorizer{Store: store},
+		Legacy:  authz.LegacyTokenAuthorizer{Token: cfg.OperatorToken},
+	}
+	operatorAPI := controlcenter.AuthorizedHandler{
+		Handler:    controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter},
+		Authorizer: authorizer,
+	}
 	attentionAPI := attention.HTTPHandler{
 		Service: attention.Service{
 			Store:       store,
 			Revalidator: attention.WorkflowRevalidator{Store: store},
 		},
-		Query: store,
-		Token: cfg.OperatorToken,
+		Query:      store,
+		Token:      cfg.OperatorToken,
+		Authorizer: authorizer,
 	}
 	githubClient, githubEnabled, err := configuredGitHubClient(cfg)
 	if err != nil {
@@ -174,8 +183,8 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	if githubEnabled {
 		onboardingGitHub = githubClient
 	}
-	repositoryAPI := onboarding.Handler{Store: store, GitHub: onboardingGitHub, Token: cfg.OperatorToken}
-	terminalService, err := configureTerminal(cfg)
+	repositoryAPI := onboarding.Handler{Store: store, GitHub: onboardingGitHub, Token: cfg.OperatorToken, Authorizer: authorizer}
+	terminalService, err := configureTerminal(cfg, authorizer)
 	if err != nil {
 		return fmt.Errorf("configure operator terminal: %w", err)
 	}
@@ -203,6 +212,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	mux.HandleFunc("GET /ops", metrics.JSON)
 	mux.HandleFunc("GET /metrics", metrics.Prometheus)
 	operatorAPI.Register(mux)
+	registerAuthAPI(mux, store, authorizer, cfg)
 	attentionAPI.Register(mux)
 	repositoryAPI.Register(mux)
 	terminalService.register(mux)

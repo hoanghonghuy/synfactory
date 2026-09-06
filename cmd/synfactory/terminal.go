@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/hoanghonghuy/synfactory/internal/authz"
 	"github.com/hoanghonghuy/synfactory/internal/config"
 	"github.com/hoanghonghuy/synfactory/internal/terminal"
 )
@@ -14,10 +16,10 @@ const terminalAuditPath = "/var/lib/synfactory/terminal-audit/session-events.jso
 
 type configuredTerminal struct {
 	manager *terminal.Manager
-	handler *terminal.Handler
+	handler *terminal.AuthorizedHandler
 }
 
-func configureTerminal(cfg config.Config) (*configuredTerminal, error) {
+func configureTerminal(cfg config.Config, authorizer authz.RequestAuthorizer) (*configuredTerminal, error) {
 	var targets []terminal.Target
 	if cfg.TerminalEnabled {
 		loaded, err := terminal.LoadTargets(cfg.TerminalTargetsPath)
@@ -43,9 +45,14 @@ func configureTerminal(cfg config.Config) (*configuredTerminal, error) {
 		}
 		manager.SetAuditSink(audit)
 	}
+	legacyEnableFlag := strings.TrimSpace(cfg.OperatorToken)
+	if legacyEnableFlag == "" && authorizer != nil {
+		legacyEnableFlag = "rbac-enabled"
+	}
+	baseHandler := &terminal.Handler{Manager: manager, Token: legacyEnableFlag}
 	return &configuredTerminal{
 		manager: manager,
-		handler: &terminal.Handler{Manager: manager, Token: cfg.OperatorToken},
+		handler: &terminal.AuthorizedHandler{Handler: baseHandler, Authorizer: authorizer},
 	}, nil
 }
 
