@@ -1,0 +1,168 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+)
+
+// BudgetSnapshot is a server-owned view of the configured budget state for one
+// candidate runtime. Callers may identify a run, but cannot self-authorize an
+// override or supply spent/projected cost as policy truth.
+type BudgetSnapshot struct {
+	HardExceeded       bool
+	SoftExceeded       bool
+	OverrideAuthorized bool
+	SoftOutcome        BudgetOutcome
+	Reason             string
+}
+
+// BudgetSnapshotReader resolves scoped repository/role/provider/workflow budget
+// state from trusted policy and usage data.
+type BudgetSnapshotReader interface {
+	BudgetSnapshot(ctx context.Context, request BudgetRequest) (BudgetSnapshot, error)
+}
+
+// BudgetPolicyMatcher lets a trusted reader cheaply determine whether the exact
+// candidate is governed by any enabled budget policy. It prevents unbudgeted
+// routes from being coupled to pricing configuration solely because a ledger
+// budget gate is installed globally.
+type BudgetPolicyMatcher interface {
+	HasBudgetPolicy(ctx context.Context, request BudgetRequest) (bool, error)
+}
+
+// BudgetSnapshotLeaser optionally serializes hard-budget admission for the
+// lifetime of one runtime attempt. The returned release function must be called
+// after durable usage accounting has finished so another worker cannot evaluate
+// the same hard cap against stale spend.
+type BudgetSnapshotLeaser interface {
+	AcquireBudgetSnapshot(ctx context.Context, request BudgetRequest) (BudgetSnapshot, func(), error)
+}
+
+// BudgetReservationReleaser is deliberately narrow: it may only be called when
+// the runtime layer can prove that the provider was not invoked. Unknown or
+// post-provider outcomes must remain reserved until durable accounting resolves
+// them.
+type BudgetReservationReleaser interface {
+	ReleaseRuntimeBudgetReservationByIdentity(ctx context.Context, repository, runID, provider, model string, at time.Time) error
+}
+
+// BudgetLeaseGate is implemented by gates that can keep hard-budget admission
+// serialized until the caller releases the attempt lease.
+type BudgetLeaseGate interface {
+	Acquire(ctx context.Context, request BudgetRequest) (BudgetDecision, func(), error)
+}
+
+// BudgetNonExecutionReleaser is implemented by budget gates that can resolve a
+// reservation after a verified pre-provider failure.
+type BudgetNonExecutionReleaser interface {
+	ReleaseNonExecuted(ctx context.Context, request BudgetRequest) error
+}
+
+type LedgerBudgetGate struct {
+	Reader BudgetSnapshotReader
+}
+
+func (g LedgerBudgetGate) Evaluate(ctx context.Context, request BudgetRequest) (BudgetDecision, error) {
+	if g.Reader == nil {
+		return BudgetDecision{}, ErrBudgetPolicyUnavailable
+	}
+	matched, err := g.hasMatchingPolicy(ctx, request)
+	if err != nil {
+		return BudgetDecision{}, err
+	}
+	if !matched {
+		return BudgetDecision{Outcome: BudgetContinue}, nil
+	}
+	snapshot, err := g.Reader.BudgetSnapshot(ctx, request)
+	if err != nil {
+		return BudgetDecision{}, err
+	}
+	return budgetDecisionFromSnapshot(snapshot)
+}
+
+func (g LedgerBudgetGate) Acquire(ctx context.Context, request BudgetRequest) (BudgetDecision, func(), error) {
+	if g.Reader == nil {
+		return BudgetDecision{}, nil, ErrBudgetPolicyUnavailable
+	}
+	matched, err := g.hasMatchingPolicy(ctx, request)
+	if err != nil {
+		return BudgetDecision{}, nil, err
+	}
+	if !matched {
+		return BudgetDecision{Outcome: BudgetContinue}, func() {}, nil
+	}
+	leaser, ok := g.Reader.(BudgetSnapshotLeaser)
+	if !ok {
+		decision, err := g.Evaluate(ctx, request)
+		return decision, func() {}, err
+	}
+	snapshot, release, err := leaser.AcquireBudgetSnapshot(ctx, request)
+	if err != nil {
+		return BudgetDecision{}, nil, err
+	}
+	if release == nil {
+		release = func() {}
+	}
+	decision, err := budgetDecisionFromSnapshot(snapshot)
+	if err != nil {
+		release()
+		return BudgetDecision{}, nil, err
+	}
+	return decision, release, nil
+}
+
+func (g LedgerBudgetGate) ReleaseNonExecuted(ctx context.Context, request BudgetRequest) error {
+	if g.Reader == nil {
+		return ErrBudgetPolicyUnavailable
+	}
+	releaser, ok := g.Reader.(BudgetReservationReleaser)
+	if !ok {
+		return nil
+	}
+	return releaser.ReleaseRuntimeBudgetReservationByIdentity(
+		ctx,
+		strings.TrimSpace(request.Repository),
+		strings.TrimSpace(request.RunID),
+		strings.TrimSpace(request.Provider),
+		strings.TrimSpace(request.Model),
+		time.Now().UTC(),
+	)
+}
+
+func (g LedgerBudgetGate) hasMatchingPolicy(ctx context.Context, request BudgetRequest) (bool, error) {
+	matcher, ok := g.Reader.(BudgetPolicyMatcher)
+	if !ok {
+		return true, nil
+	}
+	return matcher.HasBudgetPolicy(ctx, request)
+}
+
+func budgetDecisionFromSnapshot(snapshot BudgetSnapshot) (BudgetDecision, error) {
+	snapshot.Reason = strings.TrimSpace(snapshot.Reason)
+
+	if snapshot.HardExceeded && !snapshot.OverrideAuthorized {
+		return BudgetDecision{Outcome: BudgetEscalate, Reason: budgetReason(snapshot.Reason, "hard budget exceeded")}, nil
+	}
+	if snapshot.SoftExceeded {
+		outcome := snapshot.SoftOutcome
+		if outcome == "" {
+			outcome = BudgetFallback
+		}
+		switch outcome {
+		case BudgetFallback, BudgetPark, BudgetEscalate:
+			return BudgetDecision{Outcome: outcome, Reason: budgetReason(snapshot.Reason, "soft budget exceeded")}, nil
+		default:
+			return BudgetDecision{}, errors.New("invalid soft budget outcome")
+		}
+	}
+	return BudgetDecision{Outcome: BudgetContinue, Reason: snapshot.Reason}, nil
+}
+
+func budgetReason(reason, fallback string) string {
+	if reason != "" {
+		return reason
+	}
+	return fallback
+}

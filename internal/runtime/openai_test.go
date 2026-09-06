@@ -15,7 +15,7 @@ func TestOpenAIResponsesAdapter(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp_1","output":[{"content":[{"type":"output_text","text":"done"}]}]}`))
+		_, _ = w.Write([]byte(`{"id":"resp_1","output":[{"content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":123,"output_tokens":45}}`))
 	}))
 	defer server.Close()
 	adapter, err := NewOpenAIAdapter("router", RuntimeConfig{Kind: ProviderOpenAI, BaseURL: server.URL + "/v1", Model: "model-x"}, server.Client())
@@ -29,6 +29,9 @@ func TestOpenAIResponsesAdapter(t *testing.T) {
 	if result.SessionID != "resp_1" || result.Summary != "done" || result.Outcome != OutcomeSucceeded {
 		t.Fatalf("unexpected result: %+v", result)
 	}
+	if result.Usage.RequestCount != 1 || result.Usage.InputTokens != 123 || result.Usage.OutputTokens != 45 || result.Usage.RuntimeMS < 0 {
+		t.Fatalf("unexpected usage: %+v", result.Usage)
+	}
 }
 
 func TestOpenAIChatCompletionAndSecretRedaction(t *testing.T) {
@@ -38,7 +41,7 @@ func TestOpenAIChatCompletionAndSecretRedaction(t *testing.T) {
 			t.Fatalf("unexpected auth %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chat_1","choices":[{"message":{"content":"hello"}}]}`))
+		_, _ = w.Write([]byte(`{"id":"chat_1","choices":[{"message":{"content":"hello"}}],"usage":{"prompt_tokens":9,"completion_tokens":4}}`))
 	}))
 	defer server.Close()
 	adapter, err := NewOpenAIAdapter("router", RuntimeConfig{Kind: ProviderOpenAI, BaseURL: server.URL + "/v1", APIStyle: "chat_completions", Model: "m", APIKeyEnv: "TEST_API_KEY"}, server.Client())
@@ -52,6 +55,9 @@ func TestOpenAIChatCompletionAndSecretRedaction(t *testing.T) {
 	if result.Summary != "hello" || strings.Contains(result.Output, "top-secret-key") {
 		t.Fatalf("unexpected result: %+v", result)
 	}
+	if result.Usage.RequestCount != 1 || result.Usage.InputTokens != 9 || result.Usage.OutputTokens != 4 {
+		t.Fatalf("unexpected usage: %+v", result.Usage)
+	}
 }
 
 func TestOpenAIRateLimitIsTransient(t *testing.T) {
@@ -64,8 +70,11 @@ func TestOpenAIRateLimitIsTransient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = adapter.Run(context.Background(), Request{RunID: "r3", Prompt: "x", Timeout: time.Second})
+	result, err := adapter.Run(context.Background(), Request{RunID: "r3", Prompt: "x", Timeout: time.Second})
 	if ClassifyFailure(err) != FailureTransient {
 		t.Fatalf("expected transient rate limit, got %v (%v)", ClassifyFailure(err), err)
+	}
+	if result.Usage.RequestCount != 1 {
+		t.Fatalf("expected failed request to remain attributable, got %+v", result.Usage)
 	}
 }

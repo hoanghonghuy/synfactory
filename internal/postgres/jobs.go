@@ -12,12 +12,12 @@ import (
 const jobColumns = `
 id, repository_id, kind, role, subject, revision, priority, status,
 attempt, max_attempts, available_at, COALESCE(lease_owner, ''), lease_until,
-COALESCE(last_error, ''), created_at, updated_at`
+COALESCE(last_error, ''), metadata, created_at, updated_at`
 
 const qualifiedJobColumns = `
 j.id, j.repository_id, j.kind, j.role, j.subject, j.revision, j.priority, j.status,
 j.attempt, j.max_attempts, j.available_at, COALESCE(j.lease_owner, ''), j.lease_until,
-COALESCE(j.last_error, ''), j.created_at, j.updated_at`
+COALESCE(j.last_error, ''), j.metadata, j.created_at, j.updated_at`
 
 func (s *Store) CreateJob(ctx context.Context, job NewJob) (domain.Job, bool, error) {
 	if job.ID == "" || job.DedupeKey == "" || job.RepositoryID == "" || job.Kind == "" || job.Role == "" || job.Subject == "" {
@@ -276,6 +276,7 @@ func scanJob(row rowScanner) (domain.Job, error) {
 		&job.LeaseOwner,
 		&job.LeaseUntil,
 		&job.LastError,
+		&job.Metadata,
 		&job.CreatedAt,
 		&job.UpdatedAt,
 	); err != nil {

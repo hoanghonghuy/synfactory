@@ -13,6 +13,8 @@ type Registry struct {
 	mu       sync.RWMutex
 	adapters map[string]Adapter
 	config   Config
+	budget   BudgetGate
+	routing  RoutingMetricsReader
 }
 
 func BuildRegistry(cfg Config, supervisor *Supervisor, httpClient *http.Client) (*Registry, error) {
@@ -36,6 +38,31 @@ func BuildRegistry(cfg Config, supervisor *Supervisor, httpClient *http.Client) 
 	return registry, nil
 }
 
+func (r *Registry) WithBudgetGate(gate BudgetGate) *Registry {
+	if r == nil {
+		return r
+	}
+	r.mu.Lock()
+	r.budget = gate
+	if ledger, ok := gate.(LedgerBudgetGate); ok {
+		if reader, ok := ledger.Reader.(RoutingMetricsReader); ok {
+			r.routing = reader
+		}
+	}
+	r.mu.Unlock()
+	return r
+}
+
+func (r *Registry) WithRoutingMetrics(reader RoutingMetricsReader) *Registry {
+	if r == nil {
+		return r
+	}
+	r.mu.Lock()
+	r.routing = reader
+	r.mu.Unlock()
+	return r
+}
+
 func (r *Registry) Adapter(name string) (Adapter, bool) {
 	if r == nil {
 		return nil, false
@@ -44,6 +71,24 @@ func (r *Registry) Adapter(name string) (Adapter, bool) {
 	defer r.mu.RUnlock()
 	adapter, ok := r.adapters[name]
 	return adapter, ok
+}
+
+func (r *Registry) budgetGate() BudgetGate {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.budget
+}
+
+func (r *Registry) routingMetrics() RoutingMetricsReader {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.routing
 }
 
 func (r *Registry) Probe(ctx context.Context) map[string]error {
@@ -73,13 +118,21 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 	if !ok || len(roleCfg.Chain) == 0 {
 		return Result{}, nil, fmt.Errorf("%w for role %q", ErrNoRuntimeRoute, request.Role)
 	}
+	ranked, err := rankRoleCandidates(ctx, r.routingMetrics(), request, roleCfg, r.config.Runtimes)
+	if err != nil {
+		return Result{}, nil, Failure(FailureTransient, fmt.Errorf("load runtime routing scoreboard: %w", err))
+	}
 	fallbackOn := roleCfg.effectiveFallbackOn()
-	attempts := make([]Attempt, 0, len(roleCfg.Chain))
+	attempts := make([]Attempt, 0, len(ranked))
 
-	for index, candidate := range roleCfg.Chain {
+	for index, rankedCandidate := range ranked {
+		candidate := rankedCandidate.Candidate
+		routingDecision := rankedCandidate.Decision
+		runtimeCfg := r.config.Runtimes[candidate.Runtime]
+		provider := string(runtimeCfg.Kind)
 		adapter, ok := r.Adapter(candidate.Runtime)
 		if !ok {
-			attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, FailureClass: FailureUnavailable, Err: ErrRuntimeUnavailable}
+			attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Provider: provider, RoutingDecision: &routingDecision, FailureClass: FailureUnavailable, Err: ErrRuntimeUnavailable}
 			attempts = append(attempts, attempt)
 			if !fallbackOn[FailureUnavailable] {
 				return Result{}, attempts, attempt.Err
@@ -87,7 +140,6 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 			continue
 		}
 
-		runtimeCfg := r.config.Runtimes[candidate.Runtime]
 		model := candidate.Model
 		if model == "" {
 			model = runtimeCfg.Model
@@ -95,10 +147,65 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		attemptRequest := request
 		attemptRequest.Model = model
 		attemptRequest.RunID = scopedRunID(request.RunID, index+1)
+		budgetReq := budgetRequest(attemptRequest, candidate.Runtime, provider, model, runtimeCfg)
+		gate := r.budgetGate()
 
-		attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Model: model}
+		budgetRelease := func() {}
+		releaseBudget := func() {
+			budgetRelease()
+			budgetRelease = func() {}
+		}
+		releaseNonExecuted := func() error {
+			if gate == nil {
+				return nil
+			}
+			releaser, ok := gate.(BudgetNonExecutionReleaser)
+			if !ok {
+				return nil
+			}
+			return releaser.ReleaseNonExecuted(ctx, budgetReq)
+		}
+		if gate != nil {
+			var decision BudgetDecision
+			var budgetErr error
+			if leaseGate, ok := gate.(BudgetLeaseGate); ok {
+				decision, budgetRelease, budgetErr = leaseGate.Acquire(ctx, budgetReq)
+				if budgetRelease == nil {
+					budgetRelease = func() {}
+				}
+			} else {
+				decision, budgetErr = gate.Evaluate(ctx, budgetReq)
+			}
+			if budgetErr != nil {
+				releaseBudget()
+				return Result{}, attempts, Failure(FailureBudget, errors.Join(ErrBudgetPolicyUnavailable, budgetErr))
+			}
+			decision = normalizeBudgetDecision(decision)
+			switch decision.Outcome {
+			case BudgetContinue:
+			case BudgetFallback:
+				releaseBudget()
+				attempts = append(attempts, budgetAttempt(index+1, candidate.Runtime, provider, model, &routingDecision, ErrBudgetExhausted, decision.Reason))
+				continue
+			case BudgetPark:
+				releaseBudget()
+				attempt := budgetAttempt(index+1, candidate.Runtime, provider, model, &routingDecision, ErrBudgetExhausted, decision.Reason)
+				return attempt.Result, append(attempts, attempt), attempt.Err
+			case BudgetEscalate:
+				releaseBudget()
+				attempt := budgetAttempt(index+1, candidate.Runtime, provider, model, &routingDecision, ErrBudgetApprovalRequired, decision.Reason)
+				return attempt.Result, append(attempts, attempt), attempt.Err
+			}
+		}
+
+		attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Provider: provider, Model: model, RoutingDecision: &routingDecision}
 		if observer != nil {
 			if err := observer.AttemptStarted(ctx, attempt); err != nil {
+				releaseErr := releaseNonExecuted()
+				releaseBudget()
+				if releaseErr != nil {
+					return Result{}, attempts, errors.Join(fmt.Errorf("observe runtime attempt start: %w", err), ErrBudgetPolicyUnavailable, releaseErr)
+				}
 				return Result{}, attempts, fmt.Errorf("observe runtime attempt start: %w", err)
 			}
 		}
@@ -107,11 +214,18 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		if probeErr != nil {
 			attempt.Err = probeErr
 			attempt.FailureClass = ClassifyFailure(probeErr)
-			attempt.Result = Result{Runtime: candidate.Runtime, Model: model, Outcome: outcomeForFailure(attempt.FailureClass), ExitCode: -1}
+			attempt.Result = Result{Runtime: candidate.Runtime, Model: model, Outcome: outcomeForFailure(attempt.FailureClass), ExitCode: -1, Events: []Event{routingDecisionEvent(routingDecision)}}
 			if observer != nil {
 				if err := observer.AttemptFinished(ctx, attempt); err != nil {
-					return attempt.Result, append(attempts, attempt), errors.Join(probeErr, err)
+					releaseErr := releaseNonExecuted()
+					releaseBudget()
+					return attempt.Result, append(attempts, attempt), errors.Join(probeErr, err, releaseErr)
 				}
+			}
+			releaseErr := releaseNonExecuted()
+			releaseBudget()
+			if releaseErr != nil {
+				return attempt.Result, append(attempts, attempt), Failure(FailureBudget, errors.Join(ErrBudgetPolicyUnavailable, releaseErr))
 			}
 			attempts = append(attempts, attempt)
 			if fallbackOn[attempt.FailureClass] {
@@ -127,14 +241,17 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		} else {
 			result, runErr = adapter.Run(ctx, attemptRequest)
 		}
+		result.Events = append(result.Events, routingDecisionEvent(routingDecision))
 		attempt.Result = result
 		attempt.Err = runErr
 		attempt.FailureClass = ClassifyFailure(runErr)
 		if observer != nil {
 			if err := observer.AttemptFinished(ctx, attempt); err != nil {
+				releaseBudget()
 				return result, append(attempts, attempt), errors.Join(runErr, err)
 			}
 		}
+		releaseBudget()
 		attempts = append(attempts, attempt)
 		if runErr == nil && result.Outcome == OutcomeSucceeded {
 			return result, attempts, nil
@@ -163,6 +280,42 @@ func (r *Registry) Cancel(ctx context.Context, runtimeName, runID string, sequen
 		return ErrRuntimeUnavailable
 	}
 	return adapter.Cancel(ctx, scopedRunID(runID, sequence))
+}
+
+func budgetAttempt(sequence int, runtimeName, provider, model string, routing *RoutingDecision, base error, reason string) Attempt {
+	err := base
+	if strings.TrimSpace(reason) != "" {
+		err = fmt.Errorf("%w: %s", base, strings.TrimSpace(reason))
+	}
+	return Attempt{
+		Sequence:        sequence,
+		Runtime:         runtimeName,
+		Provider:        provider,
+		Model:           model,
+		RoutingDecision: routing,
+		FailureClass:    FailureBudget,
+		Result:          Result{Runtime: runtimeName, Model: model, Outcome: OutcomeUnavailable, ExitCode: -1},
+		Err:             Failure(FailureBudget, err),
+	}
+}
+
+func routingDecisionEvent(decision RoutingDecision) Event {
+	return Event{
+		Kind: "routing_decision",
+		Data: map[string]any{
+			"policy_version":        decision.PolicyVersion,
+			"score":                 decision.Score,
+			"original_order":        decision.OriginalOrder,
+			"task_complexity":       decision.TaskComplexity,
+			"capability_score":      decision.CapabilityScore,
+			"attempts":              decision.Attempts,
+			"successes":             decision.Successes,
+			"failures":              decision.Failures,
+			"rework":                decision.Rework,
+			"average_runtime_ms":    decision.AverageRuntimeMS,
+			"average_cost_microusd": decision.AverageCostMicroUSD,
+		},
+	}
 }
 
 func scopedRunID(runID string, sequence int) string {
