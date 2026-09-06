@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -50,7 +51,7 @@ func resolveGitHubAppPrivateKey(provider secrets.Provider, legacyFile string) ([
 	value, err := provider.Resolve(context.Background(), "github/app-private-key")
 	if err == nil {
 		privateKey := value.CloneBytes()
-		if len(strings.TrimSpace(string(privateKey))) == 0 {
+		if len(bytes.TrimSpace(privateKey)) == 0 {
 			return nil, fmt.Errorf("github app private key secret is empty")
 		}
 		return privateKey, nil
