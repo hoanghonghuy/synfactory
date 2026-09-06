@@ -43,6 +43,17 @@ type WorkflowDetailWire = {
   history: WorkflowHistoryWire[] | null
 }
 
+export type CurrentSession = {
+  id: string
+  expires_at: string
+  principal: {
+    subject: string
+    display_name?: string
+    roles?: Array<{ role: string; repository_id?: string }>
+    permissions?: Array<{ permission: string; repository_id?: string }>
+  }
+}
+
 export class OperatorApiError extends Error {
   constructor(
     readonly status: number,
@@ -53,17 +64,18 @@ export class OperatorApiError extends Error {
 }
 
 export class OperatorApi {
-  constructor(private readonly token: string) {}
+  constructor(private readonly token = '') {}
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async raw(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers)
-    headers.set('Authorization', `Bearer ${this.token}`)
+    if (this.token) headers.set('Authorization', `Bearer ${this.token}`)
     headers.set('Accept', 'application/json')
     if (init.body !== undefined) headers.set('Content-Type', 'application/json')
 
     const response = await fetch(path, {
       ...init,
       cache: 'no-store',
+      credentials: 'same-origin',
       headers,
     })
     if (!response.ok) {
@@ -77,11 +89,24 @@ export class OperatorApi {
       }
       throw new OperatorApiError(response.status, message)
     }
+    return response
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const response = await this.raw(path, init)
     return (await response.json()) as T
   }
 
   private get<T>(path: string): Promise<T> {
     return this.request(path, { method: 'GET' })
+  }
+
+  currentSession(): Promise<CurrentSession> {
+    return this.get('/api/v1/auth/session')
+  }
+
+  async revokeCurrentSession(): Promise<void> {
+    await this.raw('/api/v1/auth/session', { method: 'DELETE' })
   }
 
   overview(): Promise<Overview> {
@@ -126,28 +151,30 @@ export class OperatorApi {
     const wire = await this.get<WorkflowDetailWire>(`/api/v1/workflows/${encodeURIComponent(id)}`)
     return {
       workflow: wire.workflow,
-      actions: wire.actions?.map((item) => ({
-        ID: item.id,
-        Kind: item.kind,
-        Role: item.role,
-        Mode: item.mode,
-        TargetState: item.target_state,
-        Revision: item.revision,
-        BudgetKind: item.budget_kind ?? '',
-        Status: item.status,
-        JobID: item.job_id ?? '',
-        Decision: item.decision ?? '',
-        CreatedAt: item.created_at,
-        CompletedAt: item.completed_at,
-      })) ?? null,
-      history: wire.history?.map((item) => ({
-        ID: item.id,
-        FromState: item.from_state,
-        ToState: item.to_state,
-        ActorRole: item.actor_role,
-        Reason: item.reason ?? '',
-        CreatedAt: item.created_at,
-      })) ?? null,
+      actions:
+        wire.actions?.map((item) => ({
+          ID: item.id,
+          Kind: item.kind,
+          Role: item.role,
+          Mode: item.mode,
+          TargetState: item.target_state,
+          Revision: item.revision,
+          BudgetKind: item.budget_kind ?? '',
+          Status: item.status,
+          JobID: item.job_id ?? '',
+          Decision: item.decision ?? '',
+          CreatedAt: item.created_at,
+          CompletedAt: item.completed_at,
+        })) ?? null,
+      history:
+        wire.history?.map((item) => ({
+          ID: item.id,
+          FromState: item.from_state,
+          ToState: item.to_state,
+          ActorRole: item.actor_role,
+          Reason: item.reason ?? '',
+          CreatedAt: item.created_at,
+        })) ?? null,
     }
   }
 

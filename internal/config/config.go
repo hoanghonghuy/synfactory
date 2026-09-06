@@ -25,6 +25,9 @@ type Config struct {
 	GitHubAppID             int64
 	GitHubAppPrivateKeyFile string
 	GitHubWebhookSecret     string
+	GitHubOAuthClientID     string
+	GitHubOAuthClientSecret string
+	GitHubOAuthRedirectURI  string
 	OperatorToken           string
 	TerminalEnabled         bool
 	TerminalTargetsPath     string
@@ -74,6 +77,9 @@ func Load() (Config, error) {
 		GitHubAppID:             envInt64Positive("SYNFACTORY_GITHUB_APP_ID", 0),
 		GitHubAppPrivateKeyFile: strings.TrimSpace(os.Getenv("SYNFACTORY_GITHUB_APP_PRIVATE_KEY_FILE")),
 		GitHubWebhookSecret:     os.Getenv("SYNFACTORY_GITHUB_WEBHOOK_SECRET"),
+		GitHubOAuthClientID:     strings.TrimSpace(os.Getenv("SYNFACTORY_GITHUB_OAUTH_CLIENT_ID")),
+		GitHubOAuthClientSecret: strings.TrimSpace(os.Getenv("SYNFACTORY_GITHUB_OAUTH_CLIENT_SECRET")),
+		GitHubOAuthRedirectURI:  strings.TrimSpace(os.Getenv("SYNFACTORY_GITHUB_OAUTH_REDIRECT_URI")),
 		OperatorToken:           os.Getenv("SYNFACTORY_OPERATOR_TOKEN"),
 		TerminalEnabled:         envBool("SYNFACTORY_TERMINAL_ENABLED", false),
 		TerminalTargetsPath:     envString("SYNFACTORY_TERMINAL_TARGETS", "/etc/synfactory/terminal-targets.json"),
@@ -121,6 +127,10 @@ func Load() (Config, error) {
 		}
 	default:
 		return Config{}, fmt.Errorf("unsupported SYNFACTORY_GITHUB_AUTH_MODE %q (want pat or app)", cfg.GitHubAuthMode)
+	}
+	oauthConfigured := cfg.GitHubOAuthClientID != "" || cfg.GitHubOAuthClientSecret != "" || cfg.GitHubOAuthRedirectURI != ""
+	if oauthConfigured && (cfg.GitHubOAuthClientID == "" || cfg.GitHubOAuthClientSecret == "" || cfg.GitHubOAuthRedirectURI == "") {
+		return Config{}, errors.New("GitHub OAuth requires SYNFACTORY_GITHUB_OAUTH_CLIENT_ID, SYNFACTORY_GITHUB_OAUTH_CLIENT_SECRET and SYNFACTORY_GITHUB_OAUTH_REDIRECT_URI together")
 	}
 	if cfg.TerminalEnabled && strings.TrimSpace(cfg.OperatorToken) == "" {
 		return Config{}, errors.New("SYNFACTORY_OPERATOR_TOKEN is required when SYNFACTORY_TERMINAL_ENABLED=true")
