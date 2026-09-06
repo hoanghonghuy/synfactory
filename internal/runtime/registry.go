@@ -117,21 +117,39 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		attemptRequest.Model = model
 		attemptRequest.RunID = scopedRunID(request.RunID, index+1)
 
+		budgetRelease := func() {}
+		releaseBudget := func() {
+			budgetRelease()
+			budgetRelease = func() {}
+		}
 		if gate := r.budgetGate(); gate != nil {
-			decision, err := gate.Evaluate(ctx, budgetRequest(request, candidate.Runtime, provider, model))
+			var decision BudgetDecision
+			var err error
+			if leaseGate, ok := gate.(BudgetLeaseGate); ok {
+				decision, budgetRelease, err = leaseGate.Acquire(ctx, budgetRequest(request, candidate.Runtime, provider, model))
+				if budgetRelease == nil {
+					budgetRelease = func() {}
+				}
+			} else {
+				decision, err = gate.Evaluate(ctx, budgetRequest(request, candidate.Runtime, provider, model))
+			}
 			if err != nil {
+				releaseBudget()
 				return Result{}, attempts, Failure(FailureBudget, errors.Join(ErrBudgetPolicyUnavailable, err))
 			}
 			decision = normalizeBudgetDecision(decision)
 			switch decision.Outcome {
 			case BudgetContinue:
 			case BudgetFallback:
+				releaseBudget()
 				attempts = append(attempts, budgetAttempt(index+1, candidate.Runtime, provider, model, ErrBudgetExhausted, decision.Reason))
 				continue
 			case BudgetPark:
+				releaseBudget()
 				attempt := budgetAttempt(index+1, candidate.Runtime, provider, model, ErrBudgetExhausted, decision.Reason)
 				return attempt.Result, append(attempts, attempt), attempt.Err
 			case BudgetEscalate:
+				releaseBudget()
 				attempt := budgetAttempt(index+1, candidate.Runtime, provider, model, ErrBudgetApprovalRequired, decision.Reason)
 				return attempt.Result, append(attempts, attempt), attempt.Err
 			}
@@ -140,6 +158,7 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Provider: provider, Model: model}
 		if observer != nil {
 			if err := observer.AttemptStarted(ctx, attempt); err != nil {
+				releaseBudget()
 				return Result{}, attempts, fmt.Errorf("observe runtime attempt start: %w", err)
 			}
 		}
@@ -151,9 +170,11 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 			attempt.Result = Result{Runtime: candidate.Runtime, Model: model, Outcome: outcomeForFailure(attempt.FailureClass), ExitCode: -1}
 			if observer != nil {
 				if err := observer.AttemptFinished(ctx, attempt); err != nil {
+					releaseBudget()
 					return attempt.Result, append(attempts, attempt), errors.Join(probeErr, err)
 				}
 			}
+			releaseBudget()
 			attempts = append(attempts, attempt)
 			if fallbackOn[attempt.FailureClass] {
 				continue
@@ -173,9 +194,11 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		attempt.FailureClass = ClassifyFailure(runErr)
 		if observer != nil {
 			if err := observer.AttemptFinished(ctx, attempt); err != nil {
+				releaseBudget()
 				return result, append(attempts, attempt), errors.Join(runErr, err)
 			}
 		}
+		releaseBudget()
 		attempts = append(attempts, attempt)
 		if runErr == nil && result.Outcome == OutcomeSucceeded {
 			return result, attempts, nil
