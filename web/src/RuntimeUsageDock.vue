@@ -26,18 +26,21 @@ type UsageResponse = {
 }
 
 const token = ref('')
+const authorized = ref(false)
 const open = ref(false)
 const loading = ref(false)
 const error = ref('')
 const usage = ref<UsageResponse | null>(null)
 const repository = ref('')
-let tokenTimer = 0
+let authTimer = 0
 let refreshTimer = 0
 
 const totalTokens = computed(() => (usage.value?.totals.input_tokens ?? 0) + (usage.value?.totals.output_tokens ?? 0))
 
 function authHeaders(): HeadersInit {
-  return { Authorization: `Bearer ${token.value}`, Accept: 'application/json' }
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (token.value) headers.Authorization = `Bearer ${token.value}`
+  return headers
 }
 
 function money(microusd: number): string {
@@ -55,13 +58,18 @@ function duration(ms: number): string {
 }
 
 async function loadUsage(): Promise<void> {
-  if (!token.value || loading.value || document.visibilityState !== 'visible') return
+  if (!authorized.value || loading.value || document.visibilityState !== 'visible') return
   loading.value = true
   try {
     const query = new URLSearchParams({ limit: '50' })
     if (repository.value.trim()) query.set('repository', repository.value.trim())
-    const response = await fetch(`/api/v1/runtime-usage?${query.toString()}`, { headers: authHeaders(), cache: 'no-store' })
+    const response = await fetch(`/api/v1/runtime-usage?${query.toString()}`, {
+      headers: authHeaders(),
+      cache: 'no-store',
+      credentials: 'same-origin',
+    })
     if (response.status === 401) {
+      authorized.value = false
       usage.value = null
       return
     }
@@ -80,29 +88,51 @@ async function loadUsage(): Promise<void> {
   }
 }
 
-function syncToken(): void {
-  const next = sessionStorage.getItem('synfactory.operator.token') ?? ''
-  if (next === token.value) return
-  token.value = next
-  usage.value = null
-  error.value = ''
-  if (next) void loadUsage()
+async function syncAuth(): Promise<void> {
+  const nextToken = sessionStorage.getItem('synfactory.operator.token') ?? ''
+  if (nextToken) {
+    const changed = nextToken !== token.value || !authorized.value
+    token.value = nextToken
+    authorized.value = true
+    if (changed) {
+      usage.value = null
+      error.value = ''
+      void loadUsage()
+    }
+    return
+  }
+
+  token.value = ''
+  try {
+    const response = await fetch('/api/v1/auth/session', { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } })
+    const nextAuthorized = response.ok
+    const changed = nextAuthorized !== authorized.value
+    authorized.value = nextAuthorized
+    if (!nextAuthorized) usage.value = null
+    if (changed && nextAuthorized) {
+      error.value = ''
+      void loadUsage()
+    }
+  } catch {
+    authorized.value = false
+    usage.value = null
+  }
 }
 
 onMounted(() => {
-  syncToken()
-  tokenTimer = window.setInterval(syncToken, 1000)
+  void syncAuth()
+  authTimer = window.setInterval(() => void syncAuth(), 2000)
   refreshTimer = window.setInterval(() => void loadUsage(), 10_000)
 })
 
 onBeforeUnmount(() => {
-  window.clearInterval(tokenTimer)
+  window.clearInterval(authTimer)
   window.clearInterval(refreshTimer)
 })
 </script>
 
 <template>
-  <div v-if="token" class="usage-dock">
+  <div v-if="authorized" class="usage-dock">
     <button class="usage-trigger" @click="open = !open">
       <span>Cost</span>
       <strong>{{ usage ? money(usage.totals.cost_microusd) : '—' }}</strong>
