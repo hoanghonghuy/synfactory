@@ -22,14 +22,16 @@ var (
 )
 
 type BudgetRequest struct {
-	Repository string
-	WorkflowID string
-	TaskID     string
-	RunID      string
-	Role       string
-	Runtime    string
-	Provider   string
-	Model      string
+	Repository       string
+	WorkflowID       string
+	TaskID           string
+	RunID            string
+	Role             string
+	Runtime          string
+	Provider         string
+	Model            string
+	InputTokenLimit  int64
+	OutputTokenLimit int64
 }
 
 type BudgetDecision struct {
@@ -41,16 +43,18 @@ type BudgetGate interface {
 	Evaluate(ctx context.Context, request BudgetRequest) (BudgetDecision, error)
 }
 
-func budgetRequest(request Request, runtimeName, provider, model string) BudgetRequest {
+func budgetRequest(request Request, runtimeName, provider, model string, runtimeCfg RuntimeConfig) BudgetRequest {
 	return BudgetRequest{
-		Repository: strings.TrimSpace(request.Repository),
-		WorkflowID: strings.TrimSpace(request.Metadata["workflow_id"]),
-		TaskID:     strings.TrimSpace(request.Metadata["task_id"]),
-		RunID:      strings.TrimSpace(request.RunID),
-		Role:       strings.TrimSpace(request.Role),
-		Runtime:    strings.TrimSpace(runtimeName),
-		Provider:   strings.TrimSpace(provider),
-		Model:      strings.TrimSpace(model),
+		Repository:       strings.TrimSpace(request.Repository),
+		WorkflowID:       strings.TrimSpace(request.Metadata["workflow_id"]),
+		TaskID:           strings.TrimSpace(request.Metadata["task_id"]),
+		RunID:            strings.TrimSpace(request.RunID),
+		Role:             strings.TrimSpace(request.Role),
+		Runtime:          strings.TrimSpace(runtimeName),
+		Provider:         strings.TrimSpace(provider),
+		Model:            strings.TrimSpace(model),
+		InputTokenLimit:  runtimeCfg.BudgetInputTokenLimit,
+		OutputTokenLimit: runtimeCfg.BudgetOutputTokenLimit,
 	}
 }
 
