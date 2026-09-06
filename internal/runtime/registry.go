@@ -97,9 +97,11 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 	attempts := make([]Attempt, 0, len(roleCfg.Chain))
 
 	for index, candidate := range roleCfg.Chain {
+		runtimeCfg := r.config.Runtimes[candidate.Runtime]
+		provider := string(runtimeCfg.Kind)
 		adapter, ok := r.Adapter(candidate.Runtime)
 		if !ok {
-			attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, FailureClass: FailureUnavailable, Err: ErrRuntimeUnavailable}
+			attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Provider: provider, FailureClass: FailureUnavailable, Err: ErrRuntimeUnavailable}
 			attempts = append(attempts, attempt)
 			if !fallbackOn[FailureUnavailable] {
 				return Result{}, attempts, attempt.Err
@@ -107,7 +109,6 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 			continue
 		}
 
-		runtimeCfg := r.config.Runtimes[candidate.Runtime]
 		model := candidate.Model
 		if model == "" {
 			model = runtimeCfg.Model
@@ -117,7 +118,7 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 		attemptRequest.RunID = scopedRunID(request.RunID, index+1)
 
 		if gate := r.budgetGate(); gate != nil {
-			decision, err := gate.Evaluate(ctx, budgetRequest(request, candidate.Runtime, string(runtimeCfg.Kind), model))
+			decision, err := gate.Evaluate(ctx, budgetRequest(request, candidate.Runtime, provider, model))
 			if err != nil {
 				return Result{}, attempts, Failure(FailureBudget, errors.Join(ErrBudgetPolicyUnavailable, err))
 			}
@@ -125,18 +126,18 @@ func (r *Registry) Execute(ctx context.Context, request Request, observer Observ
 			switch decision.Outcome {
 			case BudgetContinue:
 			case BudgetFallback:
-				attempts = append(attempts, budgetAttempt(index+1, candidate.Runtime, model, ErrBudgetExhausted, decision.Reason))
+				attempts = append(attempts, budgetAttempt(index+1, candidate.Runtime, provider, model, ErrBudgetExhausted, decision.Reason))
 				continue
 			case BudgetPark:
-				attempt := budgetAttempt(index+1, candidate.Runtime, model, ErrBudgetExhausted, decision.Reason)
+				attempt := budgetAttempt(index+1, candidate.Runtime, provider, model, ErrBudgetExhausted, decision.Reason)
 				return attempt.Result, append(attempts, attempt), attempt.Err
 			case BudgetEscalate:
-				attempt := budgetAttempt(index+1, candidate.Runtime, model, ErrBudgetApprovalRequired, decision.Reason)
+				attempt := budgetAttempt(index+1, candidate.Runtime, provider, model, ErrBudgetApprovalRequired, decision.Reason)
 				return attempt.Result, append(attempts, attempt), attempt.Err
 			}
 		}
 
-		attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Model: model}
+		attempt := Attempt{Sequence: index + 1, Runtime: candidate.Runtime, Provider: provider, Model: model}
 		if observer != nil {
 			if err := observer.AttemptStarted(ctx, attempt); err != nil {
 				return Result{}, attempts, fmt.Errorf("observe runtime attempt start: %w", err)
@@ -205,7 +206,7 @@ func (r *Registry) Cancel(ctx context.Context, runtimeName, runID string, sequen
 	return adapter.Cancel(ctx, scopedRunID(runID, sequence))
 }
 
-func budgetAttempt(sequence int, runtimeName, model string, base error, reason string) Attempt {
+func budgetAttempt(sequence int, runtimeName, provider, model string, base error, reason string) Attempt {
 	err := base
 	if strings.TrimSpace(reason) != "" {
 		err = fmt.Errorf("%w: %s", base, strings.TrimSpace(reason))
@@ -213,6 +214,7 @@ func budgetAttempt(sequence int, runtimeName, model string, base error, reason s
 	return Attempt{
 		Sequence:     sequence,
 		Runtime:      runtimeName,
+		Provider:     provider,
 		Model:        model,
 		FailureClass: FailureBudget,
 		Result:       Result{Runtime: runtimeName, Model: model, Outcome: OutcomeUnavailable, ExitCode: -1},
