@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"os"
 	"sort"
+	"strings"
 
 	"github.com/hoanghonghuy/synfactory/migrations"
 )
@@ -76,6 +78,11 @@ func (s *Store) ApplyMigrations(ctx context.Context) error {
 		}
 	}
 
+	if path := strings.TrimSpace(os.Getenv("SYNFACTORY_RUNTIME_PRICING_BOOTSTRAP")); path != "" {
+		if err := s.ApplyRuntimePricingBootstrap(ctx, path); err != nil {
+			return fmt.Errorf("apply runtime pricing bootstrap: %w", err)
+		}
+	}
 	return nil
 }
 
