@@ -2,13 +2,18 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
 
 	runtimepolicy "github.com/hoanghonghuy/synfactory/internal/runtime"
 )
+
+const runtimeBudgetReservationTTL = 24 * time.Hour
 
 // BudgetSnapshot evaluates persisted runtime budget policies against the durable
 // usage ledger. A hard-budget override is considered authorized only when every
@@ -23,13 +28,19 @@ func (s *Store) BudgetSnapshot(ctx context.Context, request runtimepolicy.Budget
 	if err != nil {
 		return runtimepolicy.BudgetSnapshot{}, err
 	}
-	return s.budgetSnapshotWithPolicies(ctx, request, policies)
+	projected, err := s.runtimeBudgetProjectedCostMicroUSD(ctx, request, time.Now().UTC())
+	if err != nil {
+		return runtimepolicy.BudgetSnapshot{}, err
+	}
+	return s.budgetSnapshotWithPolicies(ctx, request, policies, projected)
 }
 
 // AcquireBudgetSnapshot serializes attempts that are subject to at least one
-// matching hard budget. The repository-scoped advisory lock is intentionally
-// held until the caller releases it after durable usage accounting, so another
-// worker cannot pass the same hard cap against a stale ledger snapshot.
+// matching hard budget. While the repository lock is held, the store resolves
+// immutable server-side pricing, evaluates durable spend plus the projected
+// attempt cost, and persists a fail-closed reservation before returning an
+// admissible snapshot. The reservation therefore survives process death even
+// though PostgreSQL releases the advisory lock with the dead connection.
 func (s *Store) AcquireBudgetSnapshot(ctx context.Context, request runtimepolicy.BudgetRequest) (runtimepolicy.BudgetSnapshot, func(), error) {
 	repository := strings.TrimSpace(request.Repository)
 	if repository == "" {
@@ -41,7 +52,11 @@ func (s *Store) AcquireBudgetSnapshot(ctx context.Context, request runtimepolicy
 		return runtimepolicy.BudgetSnapshot{}, nil, err
 	}
 	if !runtimeBudgetHasMatchingHardPolicy(policies, request) {
-		snapshot, err := s.budgetSnapshotWithPolicies(ctx, request, policies)
+		projected, err := s.runtimeBudgetProjectedCostMicroUSD(ctx, request, time.Now().UTC())
+		if err != nil {
+			return runtimepolicy.BudgetSnapshot{}, nil, err
+		}
+		snapshot, err := s.budgetSnapshotWithPolicies(ctx, request, policies, projected)
 		return snapshot, func() {}, err
 	}
 
@@ -67,16 +82,46 @@ func (s *Store) AcquireBudgetSnapshot(ctx context.Context, request runtimepolicy
 
 	// A contender may have waited behind another attempt. Reload policy state and
 	// spend after acquiring the lock so the decision observes that attempt's
-	// accounting before admitting more work.
+	// accounting or durable reservation before admitting more work.
 	policies, err = s.RuntimeBudgetPolicies(ctx, repository)
 	if err != nil {
 		release()
 		return runtimepolicy.BudgetSnapshot{}, nil, err
 	}
-	snapshot, err := s.budgetSnapshotWithPolicies(ctx, request, policies)
+	now := time.Now().UTC()
+	projected, err := s.runtimeBudgetProjectedCostMicroUSD(ctx, request, now)
 	if err != nil {
 		release()
 		return runtimepolicy.BudgetSnapshot{}, nil, err
+	}
+	snapshot, err := s.budgetSnapshotWithPolicies(ctx, request, policies, projected)
+	if err != nil {
+		release()
+		return runtimepolicy.BudgetSnapshot{}, nil, err
+	}
+
+	// Soft exhaustion always routes away/parks/escalates. Hard exhaustion may
+	// continue only with an exact-run authorized override. Persist the reservation
+	// before the serialized admission window can be released.
+	admitted := !snapshot.SoftExceeded && (!snapshot.HardExceeded || snapshot.OverrideAuthorized)
+	if admitted && projected > 0 {
+		reservation := RuntimeBudgetReservation{
+			ID:                   runtimeBudgetReservationID(request),
+			Repository:           repository,
+			WorkflowID:           strings.TrimSpace(request.WorkflowID),
+			TaskID:               strings.TrimSpace(request.TaskID),
+			RunID:                strings.TrimSpace(request.RunID),
+			Role:                 strings.TrimSpace(request.Role),
+			Provider:             strings.TrimSpace(request.Provider),
+			Model:                strings.TrimSpace(request.Model),
+			ReservedCostMicroUSD: projected,
+			CreatedAt:            now,
+			ExpiresAt:            now.Add(runtimeBudgetReservationTTL),
+		}
+		if err := s.CreateRuntimeBudgetReservation(ctx, reservation); err != nil {
+			release()
+			return runtimepolicy.BudgetSnapshot{}, nil, fmt.Errorf("persist runtime budget admission reservation: %w", err)
+		}
 	}
 	return snapshot, release, nil
 }
@@ -90,7 +135,7 @@ func runtimeBudgetHasMatchingHardPolicy(policies []RuntimeBudgetPolicy, request 
 	return false
 }
 
-func (s *Store) budgetSnapshotWithPolicies(ctx context.Context, request runtimepolicy.BudgetRequest, policies []RuntimeBudgetPolicy) (runtimepolicy.BudgetSnapshot, error) {
+func (s *Store) budgetSnapshotWithPolicies(ctx context.Context, request runtimepolicy.BudgetRequest, policies []RuntimeBudgetPolicy, projected int64) (runtimepolicy.BudgetSnapshot, error) {
 	var snapshot runtimepolicy.BudgetSnapshot
 	var hardExceededPolicies []string
 	now := time.Now().UTC()
@@ -103,19 +148,23 @@ func (s *Store) budgetSnapshotWithPolicies(ctx context.Context, request runtimep
 		if err != nil {
 			return runtimepolicy.BudgetSnapshot{}, err
 		}
+		projectedSpend, err := addRuntimeBudgetCost(spent, projected)
+		if err != nil {
+			return runtimepolicy.BudgetSnapshot{}, err
+		}
 
-		if policy.HardLimitMicroUSD > 0 && spent >= policy.HardLimitMicroUSD {
+		if policy.HardLimitMicroUSD > 0 && projectedSpend > policy.HardLimitMicroUSD {
 			snapshot.HardExceeded = true
 			hardExceededPolicies = append(hardExceededPolicies, policy.ID)
-			snapshot.Reason = runtimeBudgetReason(policy, spent, "hard")
+			snapshot.Reason = runtimeBudgetReason(policy, projectedSpend, "hard")
 			continue
 		}
-		if policy.SoftLimitMicroUSD > 0 && spent >= policy.SoftLimitMicroUSD {
+		if policy.SoftLimitMicroUSD > 0 && projectedSpend > policy.SoftLimitMicroUSD {
 			snapshot.SoftExceeded = true
 			outcome := runtimeBudgetSoftOutcome(policy.SoftOutcome)
 			if runtimeBudgetOutcomePriority(outcome) > runtimeBudgetOutcomePriority(snapshot.SoftOutcome) {
 				snapshot.SoftOutcome = outcome
-				snapshot.Reason = runtimeBudgetReason(policy, spent, "soft")
+				snapshot.Reason = runtimeBudgetReason(policy, projectedSpend, "soft")
 			}
 		}
 	}
@@ -136,6 +185,65 @@ func (s *Store) budgetSnapshotWithPolicies(ctx context.Context, request runtimep
 	}
 	snapshot.OverrideAuthorized = true
 	return snapshot, nil
+}
+
+func (s *Store) runtimeBudgetProjectedCostMicroUSD(ctx context.Context, request runtimepolicy.BudgetRequest, at time.Time) (int64, error) {
+	if request.InputTokenLimit < 0 || request.OutputTokenLimit < 0 {
+		return 0, fmt.Errorf("runtime budget token projections must be non-negative")
+	}
+	pricing, err := s.ResolveRuntimePricing(ctx, request.Provider, request.Model, at)
+	if err != nil {
+		return 0, fmt.Errorf("resolve runtime budget projection pricing: %w", err)
+	}
+	inputCost, err := runtimeBudgetCeilTokenCost(pricing.InputMicroUSDPerMillion, request.InputTokenLimit)
+	if err != nil {
+		return 0, err
+	}
+	outputCost, err := runtimeBudgetCeilTokenCost(pricing.OutputMicroUSDPerMillion, request.OutputTokenLimit)
+	if err != nil {
+		return 0, err
+	}
+	cost, err := addRuntimeBudgetCost(pricing.RequestMicroUSD, inputCost)
+	if err != nil {
+		return 0, err
+	}
+	return addRuntimeBudgetCost(cost, outputCost)
+}
+
+func runtimeBudgetCeilTokenCost(ratePerMillion, tokens int64) (int64, error) {
+	if ratePerMillion < 0 || tokens < 0 {
+		return 0, fmt.Errorf("runtime budget pricing inputs must be non-negative")
+	}
+	if ratePerMillion == 0 || tokens == 0 {
+		return 0, nil
+	}
+	if ratePerMillion > math.MaxInt64/tokens {
+		return 0, fmt.Errorf("runtime budget projected token cost overflow")
+	}
+	product := ratePerMillion * tokens
+	cost := product / 1_000_000
+	if product%1_000_000 != 0 {
+		cost++
+	}
+	return cost, nil
+}
+
+func addRuntimeBudgetCost(left, right int64) (int64, error) {
+	if left < 0 || right < 0 || left > math.MaxInt64-right {
+		return 0, fmt.Errorf("runtime budget projected cost overflow")
+	}
+	return left + right, nil
+}
+
+func runtimeBudgetReservationID(request runtimepolicy.BudgetRequest) string {
+	identity := strings.Join([]string{
+		strings.TrimSpace(request.Repository),
+		strings.TrimSpace(request.RunID),
+		strings.TrimSpace(request.Provider),
+		strings.TrimSpace(request.Model),
+	}, "\x00")
+	sum := sha256.Sum256([]byte(identity))
+	return "budget_" + hex.EncodeToString(sum[:12])
 }
 
 func runtimeBudgetPolicyMatchesRequest(policy RuntimeBudgetPolicy, request runtimepolicy.BudgetRequest) bool {
@@ -186,7 +294,7 @@ func (s *Store) runtimeBudgetSpentMicroUSD(ctx context.Context, policy RuntimeBu
 	if err != nil {
 		return 0, err
 	}
-	return ledgerSpent + reserved, nil
+	return addRuntimeBudgetCost(ledgerSpent, reserved)
 }
 
 func (s *Store) runtimeBudgetReservedMicroUSD(ctx context.Context, policy RuntimeBudgetPolicy, request runtimepolicy.BudgetRequest) (int64, error) {
@@ -265,5 +373,5 @@ func runtimeBudgetOutcomePriority(outcome runtimepolicy.BudgetOutcome) int {
 }
 
 func runtimeBudgetReason(policy RuntimeBudgetPolicy, spent int64, level string) string {
-	return fmt.Sprintf("%s budget policy %s exceeded: spent=%d microusd", level, policy.ID, spent)
+	return fmt.Sprintf("%s budget policy %s exceeded: projected_spend=%d microusd", level, policy.ID, spent)
 }
