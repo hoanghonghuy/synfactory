@@ -28,8 +28,8 @@ func governedTestRegistry(first, second *fakeAdapter, gate BudgetGate) *Registry
 		adapters: map[string]Adapter{"premium": first, "economy": second},
 		config: Config{
 			Runtimes: map[string]RuntimeConfig{
-				"premium": {Kind: ProviderOpenAI, Model: "premium-model"},
-				"economy": {Kind: ProviderOpenAI, Model: "economy-model"},
+				"premium": {Kind: ProviderOpenAI, Model: "premium-model", BudgetInputTokenLimit: 4096, BudgetOutputTokenLimit: 2048},
+				"economy": {Kind: ProviderOpenAI, Model: "economy-model", BudgetInputTokenLimit: 2048, BudgetOutputTokenLimit: 1024},
 			},
 			Roles: map[string]RoleConfig{
 				"developer": {Chain: []CandidateConfig{{Runtime: "premium"}, {Runtime: "economy"}}},
@@ -62,6 +62,12 @@ func TestRegistryBudgetFallbackSkipsDeniedRuntime(t *testing.T) {
 	}
 	if len(gate.requests) != 2 || gate.requests[0].Repository != "owner/repo" || gate.requests[0].WorkflowID != "wf-2" || gate.requests[0].TaskID != "task-9" || gate.requests[0].Provider != string(ProviderOpenAI) {
 		t.Fatalf("missing attribution in budget requests: %+v", gate.requests)
+	}
+	if gate.requests[0].RunID != "run-7.1" || gate.requests[0].InputTokenLimit != 4096 || gate.requests[0].OutputTokenLimit != 2048 {
+		t.Fatalf("missing server-owned projection in premium budget request: %+v", gate.requests[0])
+	}
+	if gate.requests[1].RunID != "run-7.2" || gate.requests[1].InputTokenLimit != 2048 || gate.requests[1].OutputTokenLimit != 1024 {
+		t.Fatalf("missing server-owned projection in economy budget request: %+v", gate.requests[1])
 	}
 }
 
