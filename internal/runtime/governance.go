@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 )
 
@@ -53,9 +54,21 @@ func budgetRequest(request Request, runtimeName, provider, model string, runtime
 		Runtime:          strings.TrimSpace(runtimeName),
 		Provider:         strings.TrimSpace(provider),
 		Model:            strings.TrimSpace(model),
-		InputTokenLimit:  runtimeCfg.BudgetInputTokenLimit,
-		OutputTokenLimit: runtimeCfg.BudgetOutputTokenLimit,
+		InputTokenLimit:  conservativeBudgetTokenLimit(runtimeCfg.BudgetInputTokenLimit),
+		OutputTokenLimit: conservativeBudgetTokenLimit(runtimeCfg.BudgetOutputTokenLimit),
 	}
+}
+
+// A zero config value means the operator has not supplied a trustworthy upper
+// bound. Keep ordinary, unbudgeted routes backward-compatible, but make any
+// priced budget projection conservative: a zero-rate pricing dimension still
+// contributes zero, while a positive rate either overflows projection or yields
+// a deliberately huge reservation instead of silently under-reserving spend.
+func conservativeBudgetTokenLimit(configured int64) int64 {
+	if configured > 0 {
+		return configured
+	}
+	return math.MaxInt64
 }
 
 func budgetRunID(request Request) string {
