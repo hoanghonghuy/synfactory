@@ -23,6 +23,14 @@ type BudgetSnapshotReader interface {
 	BudgetSnapshot(ctx context.Context, request BudgetRequest) (BudgetSnapshot, error)
 }
 
+// BudgetPolicyMatcher lets a trusted reader cheaply determine whether the exact
+// candidate is governed by any enabled budget policy. It prevents unbudgeted
+// routes from being coupled to pricing configuration solely because a ledger
+// budget gate is installed globally.
+type BudgetPolicyMatcher interface {
+	HasBudgetPolicy(ctx context.Context, request BudgetRequest) (bool, error)
+}
+
 // BudgetSnapshotLeaser optionally serializes hard-budget admission for the
 // lifetime of one runtime attempt. The returned release function must be called
 // after durable usage accounting has finished so another worker cannot evaluate
@@ -45,6 +53,13 @@ func (g LedgerBudgetGate) Evaluate(ctx context.Context, request BudgetRequest) (
 	if g.Reader == nil {
 		return BudgetDecision{}, ErrBudgetPolicyUnavailable
 	}
+	matched, err := g.hasMatchingPolicy(ctx, request)
+	if err != nil {
+		return BudgetDecision{}, err
+	}
+	if !matched {
+		return BudgetDecision{Outcome: BudgetContinue}, nil
+	}
 	snapshot, err := g.Reader.BudgetSnapshot(ctx, request)
 	if err != nil {
 		return BudgetDecision{}, err
@@ -55,6 +70,13 @@ func (g LedgerBudgetGate) Evaluate(ctx context.Context, request BudgetRequest) (
 func (g LedgerBudgetGate) Acquire(ctx context.Context, request BudgetRequest) (BudgetDecision, func(), error) {
 	if g.Reader == nil {
 		return BudgetDecision{}, nil, ErrBudgetPolicyUnavailable
+	}
+	matched, err := g.hasMatchingPolicy(ctx, request)
+	if err != nil {
+		return BudgetDecision{}, nil, err
+	}
+	if !matched {
+		return BudgetDecision{Outcome: BudgetContinue}, func() {}, nil
 	}
 	leaser, ok := g.Reader.(BudgetSnapshotLeaser)
 	if !ok {
@@ -74,6 +96,14 @@ func (g LedgerBudgetGate) Acquire(ctx context.Context, request BudgetRequest) (B
 		return BudgetDecision{}, nil, err
 	}
 	return decision, release, nil
+}
+
+func (g LedgerBudgetGate) hasMatchingPolicy(ctx context.Context, request BudgetRequest) (bool, error) {
+	matcher, ok := g.Reader.(BudgetPolicyMatcher)
+	if !ok {
+		return true, nil
+	}
+	return matcher.HasBudgetPolicy(ctx, request)
 }
 
 func budgetDecisionFromSnapshot(snapshot BudgetSnapshot) (BudgetDecision, error) {
