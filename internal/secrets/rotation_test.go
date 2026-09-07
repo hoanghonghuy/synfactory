@@ -83,6 +83,30 @@ func TestRotatingProviderFailedStageDoesNotChangeActive(t *testing.T) {
 	}
 }
 
+func TestRotatingProviderRejectsEmptyCandidate(t *testing.T) {
+	active := rotationTestProvider{values: map[string]Value{
+		"operator/token": newValue([]byte("active-secret"), "active"),
+	}}
+	candidate := rotationTestProvider{values: map[string]Value{
+		"operator/token": newValue(nil, "candidate"),
+	}}
+	provider := NewRotatingProvider(active)
+
+	if err := provider.Stage(t.Context(), "operator/token", candidate); err == nil {
+		t.Fatal("Stage() error = nil, want empty-candidate rejection")
+	}
+	if provider.HasStaged("operator/token") {
+		t.Fatal("empty candidate left a staged credential")
+	}
+	value, err := provider.Resolve(t.Context(), "operator/token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(value.CloneBytes()); got != "active-secret" {
+		t.Fatalf("Resolve() = %q, want active-secret", got)
+	}
+}
+
 func TestRotatingProviderDiscardPreservesActive(t *testing.T) {
 	active := rotationTestProvider{values: map[string]Value{
 		"github/webhook-secret": newValue([]byte("active-secret"), "active"),
