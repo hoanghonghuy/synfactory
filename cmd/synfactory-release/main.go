@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	releasefactory "github.com/hoanghonghuy/synfactory/internal/release"
@@ -44,11 +45,18 @@ func runPublish(args []string) error {
 	registryPrefix := fs.String("registry", "", "OCI repository prefix, for example ghcr.io/acme/synfactory")
 	outputPath := fs.String("output", "", "durable release manifest path")
 	attempts := fs.Int("attempts", 3, "maximum attempts for transient registry failures")
+	auditDatabaseURL := fs.String("audit-database-url", os.Getenv("DATABASE_URL"), "PostgreSQL URL for durable security audit events")
+	actorID := fs.String("actor-id", os.Getenv("GITHUB_ACTOR"), "authoritative release actor/principal")
+	requestID := fs.String("request-id", os.Getenv("GITHUB_RUN_ID"), "release workflow/run/request correlation id")
+	repository := fs.String("repository", os.Getenv("GITHUB_REPOSITORY"), "source repository identity")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *version == "" || *sourceSHA == "" || *evidencePath == "" || *registryPrefix == "" || *outputPath == "" || *outputPath == "-" {
 		return errors.New("publish requires --version, --source-sha, --evidence, --registry and a durable --output path")
+	}
+	if strings.TrimSpace(*auditDatabaseURL) == "" || strings.TrimSpace(*actorID) == "" || strings.TrimSpace(*repository) == "" {
+		return errors.New("publish requires durable audit database, actor identity and repository identity")
 	}
 	raw, err := os.ReadFile(*evidencePath)
 	if err != nil {
@@ -62,21 +70,43 @@ func runPublish(args []string) error {
 	if err != nil {
 		return err
 	}
-	alreadyRecorded, err := verifyExistingRelease(*outputPath, input)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	auditor, err := openReleaseAuditor(ctx, *auditDatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer auditor.Close()
+	identity := releaseAuditIdentity{
+		ActorType:  releaseActorType(),
+		ActorID:    *actorID,
+		RequestID:  *requestID,
+		Repository: *repository,
+		RunAttempt: os.Getenv("GITHUB_RUN_ATTEMPT"),
+	}
+
+	existing, alreadyRecorded, err := verifyExistingRelease(*outputPath, input)
 	if err != nil {
 		return err
 	}
 	if alreadyRecorded {
+		if err := auditor.RecordPublish(ctx, identity, input, existing, "succeeded", true); err != nil {
+			return err
+		}
 		fmt.Fprintln(os.Stderr, "release already recorded; artifact load and registry publish skipped")
 		return nil
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
+	if err := auditor.RecordPublish(ctx, identity, input, releasefactory.Manifest{}, "started", false); err != nil {
+		return err
+	}
 	if err := releasefactory.VerifyCheckoutSource(ctx, *sourceSHA, nil); err != nil {
 		return err
 	}
 	if err := releasefactory.LoadAndVerifyEvidenceImages(ctx, evidence, filepath.Dir(*evidencePath), nil); err != nil {
+		return err
+	}
+	if err := auditor.RecordVerification(ctx, identity, input, "succeeded"); err != nil {
 		return err
 	}
 	manifest, err := (releasefactory.Publisher{
@@ -87,43 +117,53 @@ func runPublish(args []string) error {
 	if err != nil {
 		return err
 	}
-	return writeJSON(*outputPath, manifest)
+	if err := writeJSON(*outputPath, manifest); err != nil {
+		return err
+	}
+	return auditor.RecordPublish(ctx, identity, input, manifest, "succeeded", false)
 }
 
-func verifyExistingRelease(path string, input releasefactory.PublishInput) (bool, error) {
+func releaseActorType() string {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("GITHUB_ACTIONS")), "true") {
+		return "github_actions"
+	}
+	return "operator"
+}
+
+func verifyExistingRelease(path string, input releasefactory.PublishInput) (releasefactory.Manifest, bool, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return releasefactory.Manifest{}, false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("read existing release manifest: %w", err)
+		return releasefactory.Manifest{}, false, fmt.Errorf("read existing release manifest: %w", err)
 	}
 	var existing releasefactory.Manifest
 	if err := json.Unmarshal(raw, &existing); err != nil {
-		return false, fmt.Errorf("decode existing release manifest: %w", err)
+		return releasefactory.Manifest{}, false, fmt.Errorf("decode existing release manifest: %w", err)
 	}
 	if err := existing.Validate(); err != nil {
-		return false, err
+		return releasefactory.Manifest{}, false, err
 	}
 	if existing.Version != input.Version || existing.SourceSHA != input.SourceSHA || existing.EvidenceSHA256 != input.Evidence.ManifestSHA256 || existing.WebLockSHA256 != input.Evidence.WebLockSHA256 {
-		return false, fmt.Errorf("%w: output path is already bound to another release identity", releasefactory.ErrIdentityConflict)
+		return releasefactory.Manifest{}, false, fmt.Errorf("%w: output path is already bound to another release identity", releasefactory.ErrIdentityConflict)
 	}
 	if len(existing.Scanners) != len(input.Evidence.Scanners) {
-		return false, fmt.Errorf("%w: recorded release scanner provenance set differs", releasefactory.ErrIdentityConflict)
+		return releasefactory.Manifest{}, false, fmt.Errorf("%w: recorded release scanner provenance set differs", releasefactory.ErrIdentityConflict)
 	}
 	for scanner, version := range input.Evidence.Scanners {
 		if existing.Scanners[scanner] != version {
-			return false, fmt.Errorf("%w: recorded release scanner provenance differs for %s", releasefactory.ErrIdentityConflict, scanner)
+			return releasefactory.Manifest{}, false, fmt.Errorf("%w: recorded release scanner provenance differs for %s", releasefactory.ErrIdentityConflict, scanner)
 		}
 	}
 	for _, image := range existing.Images {
 		candidate, ok := input.Images[image.Name]
 		sbom := input.Evidence.SBOMs[image.Name]
 		if !ok || candidate.Repository != image.Repository || candidate.SBOMSHA256 != image.SBOMSHA256 || sbom.Path != image.SBOMPath {
-			return false, fmt.Errorf("%w: recorded release differs from selected evidence for %s", releasefactory.ErrIdentityConflict, image.Name)
+			return releasefactory.Manifest{}, false, fmt.Errorf("%w: recorded release differs from selected evidence for %s", releasefactory.ErrIdentityConflict, image.Name)
 		}
 	}
-	return true, nil
+	return existing, true, nil
 }
 
 func runPromotion(action string, args []string) error {
