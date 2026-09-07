@@ -73,3 +73,70 @@ func TestTrackingProviderTracksRotationState(t *testing.T) {
 		t.Fatalf("rotation state = %q, want %q", health.RotationState, RotationStaged)
 	}
 }
+
+func TestTrackingProviderSnapshotIsDeterministic(t *testing.T) {
+	provider := NewTrackingProvider(healthTestProvider{})
+	provider.Register("zeta/token", CredentialMetadata{Owner: "zeta"})
+	provider.Register("alpha/token", CredentialMetadata{Owner: "alpha"})
+
+	snapshot := provider.Snapshot()
+	if len(snapshot) != 2 {
+		t.Fatalf("Snapshot() len = %d, want 2", len(snapshot))
+	}
+	if snapshot[0].LogicalName != "alpha/token" || snapshot[1].LogicalName != "zeta/token" {
+		t.Fatalf("Snapshot() order = %q, %q", snapshot[0].LogicalName, snapshot[1].LogicalName)
+	}
+}
+
+func TestTrackingProviderDiagnosticsClassifiesCredentialHealth(t *testing.T) {
+	now := time.Date(2026, 9, 7, 7, 0, 0, 0, time.UTC)
+	provider := NewTrackingProvider(healthTestProvider{})
+	provider.Register("healthy", CredentialMetadata{ExpiresAt: now.Add(72 * time.Hour)})
+	provider.Register("expiring", CredentialMetadata{ExpiresAt: now.Add(12 * time.Hour)})
+	provider.Register("expired", CredentialMetadata{ExpiresAt: now.Add(-time.Minute)})
+	provider.MarkRotation("required", RotationRequired)
+	provider.MarkRotation("staged", RotationStaged)
+
+	provider.mu.Lock()
+	unavailable := provider.health["unavailable"]
+	unavailable.LogicalName = "unavailable"
+	unavailable.LastFailure = now.Add(-time.Minute)
+	unavailable.Available = false
+	unavailable.RotationState = RotationStable
+	provider.health["unavailable"] = unavailable
+	provider.mu.Unlock()
+
+	diagnostics := provider.Diagnostics(now, 24*time.Hour)
+	states := make(map[string]DiagnosticState, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		states[diagnostic.LogicalName] = diagnostic.State
+	}
+
+	want := map[string]DiagnosticState{
+		"healthy":     DiagnosticHealthy,
+		"expiring":    DiagnosticExpiring,
+		"expired":     DiagnosticExpired,
+		"required":    DiagnosticRotationRequired,
+		"staged":      DiagnosticRotationStaged,
+		"unavailable": DiagnosticUnavailable,
+	}
+	for logicalName, wantState := range want {
+		if got := states[logicalName]; got != wantState {
+			t.Fatalf("state for %q = %q, want %q", logicalName, got, wantState)
+		}
+	}
+}
+
+func TestTrackingProviderDiagnosticsDoesNotMutateRotationState(t *testing.T) {
+	now := time.Date(2026, 9, 7, 7, 0, 0, 0, time.UTC)
+	provider := NewTrackingProvider(healthTestProvider{})
+	provider.Register("github/token", CredentialMetadata{ExpiresAt: now.Add(time.Hour)})
+
+	diagnostics := provider.Diagnostics(now, 24*time.Hour)
+	if diagnostics[0].State != DiagnosticExpiring {
+		t.Fatalf("diagnostic state = %q, want %q", diagnostics[0].State, DiagnosticExpiring)
+	}
+	if got := provider.Snapshot()[0].RotationState; got != RotationStable {
+		t.Fatalf("rotation state mutated to %q, want %q", got, RotationStable)
+	}
+}
