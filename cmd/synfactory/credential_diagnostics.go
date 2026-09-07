@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"strings"
@@ -49,8 +50,11 @@ func registerCredentialDiagnostics(mux *http.ServeMux, authorizer authz.RequestA
 
 		for _, probe := range probes {
 			tracker.Register(probe.logicalName, secrets.CredentialMetadata{Owner: probe.owner})
-			_, resolveErr := tracker.Resolve(r.Context(), probe.logicalName)
+			value, resolveErr := tracker.Resolve(r.Context(), probe.logicalName)
 			if resolveErr == nil {
+				if len(bytes.TrimSpace(value.CloneBytes())) == 0 {
+					tracker.RecordUnavailable(probe.logicalName, value.Provider)
+				}
 				continue
 			}
 			if errors.Is(resolveErr, secrets.ErrNotFound) && strings.TrimSpace(probe.legacyValue) != "" {
