@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -24,11 +25,30 @@ func registerAuthAPI(mux *http.ServeMux, store *postgres.Store, authorizer authz
 	if cfg.GitHubOAuthClientID == "" {
 		return
 	}
+	provider, err := configuredSecretProvider()
+	if err != nil {
+		slog.Error("configure oauth secret provider", "error", err)
+		return
+	}
+	clientSecret, err := resolveOptionalSecret(
+		context.Background(),
+		provider,
+		"github/oauth-client-secret",
+		cfg.GitHubOAuthClientSecret,
+	)
+	if err != nil {
+		slog.Error("resolve github oauth client secret", "error", err)
+		return
+	}
+	if clientSecret == "" {
+		slog.Error("github oauth client secret is not configured")
+		return
+	}
 	oauth := authapi.OAuthHandler{
 		Store: store,
 		Provider: authz.GitHubOAuthProvider{
 			ClientID:     cfg.GitHubOAuthClientID,
-			ClientSecret: cfg.GitHubOAuthClientSecret,
+			ClientSecret: clientSecret,
 			Client:       &http.Client{Timeout: 15 * time.Second},
 		},
 		Issuer:       issuer,
