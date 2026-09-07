@@ -9,38 +9,50 @@ import (
 	"time"
 
 	"github.com/hoanghonghuy/synfactory/internal/attention"
+	"github.com/hoanghonghuy/synfactory/internal/config"
 	"github.com/hoanghonghuy/synfactory/internal/postgres"
 )
 
 func configuredAttentionDelivery(store *postgres.Store) (namedComponent, bool) {
-	webhookURL := strings.TrimSpace(os.Getenv("SYNFACTORY_SLACK_WEBHOOK_URL"))
-	if webhookURL == "" {
+	cfg, err := config.Load()
+	if err != nil {
 		return namedComponent{}, false
 	}
+	components := []namedComponent{configuredCredentialAttention(store, cfg)}
 
-	dispatcher := attention.Dispatcher{
-		Store: store,
-		Router: attention.EscalationRouter{Rules: []attention.EscalationRule{{
-			MinSeverity: attention.SeverityInfo,
-			Providers:   []string{"slack"},
-		}}},
+	webhookURL := strings.TrimSpace(os.Getenv("SYNFACTORY_SLACK_WEBHOOK_URL"))
+	if webhookURL != "" {
+		dispatcher := attention.Dispatcher{
+			Store: store,
+			Router: attention.EscalationRouter{Rules: []attention.EscalationRule{{
+				MinSeverity: attention.SeverityInfo,
+				Providers:   []string{"slack"},
+			}}},
+		}
+		executor := attention.Executor{
+			Store:  store,
+			Source: store,
+			Providers: map[string]attention.Provider{
+				"slack": attention.SlackWebhookProvider{URL: webhookURL},
+			},
+			Policy: attention.DeliveryPolicy{
+				MaxAttempts: 4,
+				BaseDelay:   30 * time.Second,
+				MaxDelay:    10 * time.Minute,
+			},
+		}
+		components = append(components, namedComponent{
+			name: "attention notification delivery",
+			run: func(ctx context.Context) error {
+				return runAttentionDelivery(ctx, dispatcher, executor, 10*time.Second, 20)
+			},
+		})
 	}
-	executor := attention.Executor{
-		Store:  store,
-		Source: store,
-		Providers: map[string]attention.Provider{
-			"slack": attention.SlackWebhookProvider{URL: webhookURL},
-		},
-		Policy: attention.DeliveryPolicy{
-			MaxAttempts: 4,
-			BaseDelay:   30 * time.Second,
-			MaxDelay:    10 * time.Minute,
-		},
-	}
+
 	return namedComponent{
-		name: "attention notification delivery",
+		name: "attention operations",
 		run: func(ctx context.Context) error {
-			return runAttentionDelivery(ctx, dispatcher, executor, 10*time.Second, 20)
+			return runComponents(ctx, components, cfg.ShutdownTimeout)
 		},
 	}, true
 }
