@@ -22,21 +22,24 @@ type credentialDiagnosticsResponse struct {
 
 type credentialProbe struct {
 	logicalName string
-	legacyValue string
 	owner       string
 }
 
 func credentialDiagnostics(ctx context.Context, cfg config.Config, now time.Time) ([]secrets.CredentialDiagnostic, error) {
-	provider, err := configuredSecretProvider()
+	provider, err := configuredAPIRotatingProvider(cfg)
 	if err != nil {
 		return nil, err
 	}
+	return credentialDiagnosticsWithProvider(ctx, cfg, now, provider)
+}
+
+func credentialDiagnosticsWithProvider(ctx context.Context, cfg config.Config, now time.Time, provider secrets.Provider) ([]secrets.CredentialDiagnostic, error) {
 	tracker := secrets.NewTrackingProvider(provider)
 	probes := []credentialProbe{
-		{logicalName: "operator/token", legacyValue: cfg.OperatorToken, owner: "platform"},
-		{logicalName: "github/webhook-secret", legacyValue: cfg.GitHubWebhookSecret, owner: "platform"},
-		{logicalName: "github/oauth-client-secret", legacyValue: cfg.GitHubOAuthClientSecret, owner: "platform"},
-		{logicalName: "github/token", legacyValue: cfg.GitHubToken, owner: "platform"},
+		{logicalName: "operator/token", owner: "platform"},
+		{logicalName: "github/webhook-secret", owner: "platform"},
+		{logicalName: "github/oauth-client-secret", owner: "platform"},
+		{logicalName: "github/token", owner: "platform"},
 	}
 
 	for _, probe := range probes {
@@ -47,9 +50,6 @@ func credentialDiagnostics(ctx context.Context, cfg config.Config, now time.Time
 				tracker.RecordUnavailable(probe.logicalName, value.Provider)
 			}
 			continue
-		}
-		if errors.Is(resolveErr, secrets.ErrNotFound) && strings.TrimSpace(probe.legacyValue) != "" {
-			tracker.RecordAvailable(probe.logicalName, "legacy")
 		}
 	}
 
@@ -80,6 +80,14 @@ func legacyPrivateKeyFileAvailable(path string) bool {
 }
 
 func registerCredentialDiagnostics(mux *http.ServeMux, authorizer authz.RequestAuthorizer, cfg config.Config, audit securityAuditWriter) {
+	provider, err := configuredAPIRotatingProvider(cfg)
+	if err != nil {
+		return
+	}
+	registerCredentialDiagnosticsWithProvider(mux, authorizer, cfg, audit, provider)
+}
+
+func registerCredentialDiagnosticsWithProvider(mux *http.ServeMux, authorizer authz.RequestAuthorizer, cfg config.Config, audit securityAuditWriter, provider secrets.Provider) {
 	mux.HandleFunc("GET /api/security/credentials", func(w http.ResponseWriter, r *http.Request) {
 		principal, err := authorizer.Authorize(r, authz.PermissionSecurityPolicy, "")
 		if err != nil {
@@ -91,7 +99,7 @@ func registerCredentialDiagnostics(mux *http.ServeMux, authorizer authz.RequestA
 			return
 		}
 
-		diagnostics, err := credentialDiagnostics(r.Context(), cfg, time.Now())
+		diagnostics, err := credentialDiagnosticsWithProvider(r.Context(), cfg, time.Now(), provider)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "credential provider unavailable"})
 			return

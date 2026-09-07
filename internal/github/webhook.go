@@ -18,17 +18,28 @@ type WebhookStore interface {
 	PutEvent(ctx context.Context, event postgres.InboxEvent) (postgres.InboxEvent, bool, error)
 }
 
+type WebhookSecretResolver func(context.Context) (string, error)
+
 type WebhookHandler struct {
-	secret string
-	store  WebhookStore
-	wake   func()
+	secret         string
+	secretResolver WebhookSecretResolver
+	store          WebhookStore
+	wake           func()
 }
 
 func NewWebhookHandler(secret string, store WebhookStore, wake func()) *WebhookHandler {
+	return newWebhookHandler(secret, nil, store, wake)
+}
+
+func NewResolvingWebhookHandler(resolver WebhookSecretResolver, store WebhookStore, wake func()) *WebhookHandler {
+	return newWebhookHandler("", resolver, store, wake)
+}
+
+func newWebhookHandler(secret string, resolver WebhookSecretResolver, store WebhookStore, wake func()) *WebhookHandler {
 	if wake == nil {
 		wake = func() {}
 	}
-	return &WebhookHandler{secret: secret, store: store, wake: wake}
+	return &WebhookHandler{secret: secret, secretResolver: resolver, store: store, wake: wake}
 }
 
 func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +48,12 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if h.secret == "" {
+	secret, err := h.secretForRequest(r.Context())
+	if err != nil {
+		http.Error(w, "github webhook credential unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if secret == "" {
 		http.Error(w, "github webhook is not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -53,7 +69,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
-	if !ValidSignature(h.secret, body, r.Header.Get("X-Hub-Signature-256")) {
+	if !ValidSignature(secret, body, r.Header.Get("X-Hub-Signature-256")) {
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
@@ -104,4 +120,11 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"event_id": stored.ID,
 		"inserted": inserted,
 	})
+}
+
+func (h *WebhookHandler) secretForRequest(ctx context.Context) (string, error) {
+	if h.secretResolver == nil {
+		return h.secret, nil
+	}
+	return h.secretResolver(ctx)
 }

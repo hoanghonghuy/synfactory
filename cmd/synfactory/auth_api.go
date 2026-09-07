@@ -10,9 +10,19 @@ import (
 	"github.com/hoanghonghuy/synfactory/internal/authz"
 	"github.com/hoanghonghuy/synfactory/internal/config"
 	"github.com/hoanghonghuy/synfactory/internal/postgres"
+	"github.com/hoanghonghuy/synfactory/internal/secrets"
 )
 
 func registerAuthAPI(mux *http.ServeMux, store *postgres.Store, authorizer authz.RequestAuthorizer, cfg config.Config) {
+	provider, err := configuredAPIRotatingProvider(cfg)
+	if err != nil {
+		slog.Error("configure auth secret provider", "error", err)
+		return
+	}
+	registerAuthAPIWithSecretProvider(mux, store, authorizer, cfg, provider)
+}
+
+func registerAuthAPIWithSecretProvider(mux *http.ServeMux, store *postgres.Store, authorizer authz.RequestAuthorizer, cfg config.Config, provider secrets.Provider) {
 	issuer := authz.SessionIssuer{Store: store}
 	sessions := authz.SessionAuthorizer{Store: store}
 	handler := authapi.Handler{
@@ -22,22 +32,17 @@ func registerAuthAPI(mux *http.ServeMux, store *postgres.Store, authorizer authz
 		Issuer:     issuer,
 	}
 	handler.Register(mux)
-	registerCredentialDiagnostics(mux, authorizer, cfg, store)
+	registerCredentialDiagnosticsWithProvider(mux, authorizer, cfg, store, provider)
 	registerSecurityAudit(mux, authorizer, store, store)
 
 	if cfg.GitHubOAuthClientID == "" {
-		return
-	}
-	provider, err := configuredSecretProvider()
-	if err != nil {
-		slog.Error("configure oauth secret provider", "error", err)
 		return
 	}
 	clientSecret, err := resolveOptionalSecret(
 		context.Background(),
 		provider,
 		"github/oauth-client-secret",
-		cfg.GitHubOAuthClientSecret,
+		"",
 	)
 	if err != nil {
 		slog.Error("resolve github oauth client secret", "error", err)
