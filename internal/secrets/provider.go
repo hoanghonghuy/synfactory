@@ -39,6 +39,14 @@ type Provider interface {
 	Resolve(ctx context.Context, logicalName string) (Value, error)
 }
 
+// MetadataProvider is an optional provider capability for value-free source
+// metadata. TrackingProvider consumes it opportunistically; metadata lookup
+// failures never turn an otherwise successful secret resolution into a
+// credential outage.
+type MetadataProvider interface {
+	Metadata(ctx context.Context, logicalName string) (CredentialMetadata, error)
+}
+
 type EnvProvider struct {
 	Prefix string
 }
@@ -60,36 +68,12 @@ type FileProvider struct {
 }
 
 func (p FileProvider) Resolve(_ context.Context, logicalName string) (Value, error) {
-	name, err := normalizeLogicalName(logicalName)
+	file, err := p.openSecret(logicalName)
 	if err != nil {
 		return Value{}, err
 	}
-	rootPath := filepath.Clean(strings.TrimSpace(p.Root))
-	if rootPath == "." || !filepath.IsAbs(rootPath) {
-		return Value{}, errors.New("secret file root must be an absolute path")
-	}
-	root, err := os.OpenRoot(rootPath)
-	if err != nil {
-		return Value{}, fmt.Errorf("open secret root: %w", err)
-	}
-	defer root.Close()
-
-	file, err := root.Open(filepath.FromSlash(name))
-	if errors.Is(err, os.ErrNotExist) {
-		return Value{}, fmt.Errorf("%w: %s", ErrNotFound, logicalName)
-	}
-	if err != nil {
-		return Value{}, fmt.Errorf("open secret %q: %w", logicalName, err)
-	}
 	defer file.Close()
 
-	info, err := file.Stat()
-	if err != nil {
-		return Value{}, fmt.Errorf("stat secret %q: %w", logicalName, err)
-	}
-	if !info.Mode().IsRegular() {
-		return Value{}, errors.New("secret file must be a regular file")
-	}
 	value, err := io.ReadAll(io.LimitReader(file, maxFileSecretBytes+1))
 	if err != nil {
 		return Value{}, fmt.Errorf("read secret %q: %w", logicalName, err)
@@ -98,6 +82,58 @@ func (p FileProvider) Resolve(_ context.Context, logicalName string) (Value, err
 		return Value{}, errors.New("secret file exceeds size limit")
 	}
 	return newValue(value, "file"), nil
+}
+
+// Metadata exposes the file modification timestamp as the source creation/
+// rotation timestamp. File-backed deployments do not provide a portable
+// expiry timestamp, so ExpiresAt intentionally remains unset.
+func (p FileProvider) Metadata(_ context.Context, logicalName string) (CredentialMetadata, error) {
+	file, err := p.openSecret(logicalName)
+	if err != nil {
+		return CredentialMetadata{}, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return CredentialMetadata{}, fmt.Errorf("stat secret %q: %w", logicalName, err)
+	}
+	return CredentialMetadata{CreatedAt: info.ModTime().UTC()}, nil
+}
+
+func (p FileProvider) openSecret(logicalName string) (*os.File, error) {
+	name, err := normalizeLogicalName(logicalName)
+	if err != nil {
+		return nil, err
+	}
+	rootPath := filepath.Clean(strings.TrimSpace(p.Root))
+	if rootPath == "." || !filepath.IsAbs(rootPath) {
+		return nil, errors.New("secret file root must be an absolute path")
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("open secret root: %w", err)
+	}
+	defer root.Close()
+
+	file, err := root.Open(filepath.FromSlash(name))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, logicalName)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open secret %q: %w", logicalName, err)
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("stat secret %q: %w", logicalName, err)
+	}
+	if !info.Mode().IsRegular() {
+		file.Close()
+		return nil, errors.New("secret file must be a regular file")
+	}
+	return file, nil
 }
 
 func normalizeLogicalName(value string) (string, error) {
