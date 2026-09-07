@@ -4,10 +4,37 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-export SYNFACTORY_TEST_DATABASE_URL="${SYNFACTORY_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:5432/synfactory_test?sslmode=disable}"
+cleanup_db=0
+container_name="synfactory-prepush-postgres-$$"
 
-echo "==> Start local PostgreSQL"
-docker compose --profile local-db up -d --wait postgres
+if [ -z "${SYNFACTORY_TEST_DATABASE_URL:-}" ]; then
+  export SYNFACTORY_TEST_DATABASE_URL="postgres://postgres:postgres@localhost:55432/synfactory_test?sslmode=disable"
+  echo "==> Start isolated PostgreSQL on localhost:55432"
+  docker run --rm -d \
+    --name "$container_name" \
+    -e POSTGRES_USER=postgres \
+    -e POSTGRES_PASSWORD=postgres \
+    -e POSTGRES_DB=synfactory_test \
+    -p 55432:5432 \
+    postgres:16 >/dev/null
+  cleanup_db=1
+  trap 'if [ "$cleanup_db" = "1" ]; then docker rm -f "$container_name" >/dev/null 2>&1 || true; fi' EXIT
+
+  ready=0
+  for _ in $(seq 1 30); do
+    if docker exec "$container_name" pg_isready -U postgres -d synfactory_test >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$ready" != "1" ]; then
+    echo "PostgreSQL did not become ready" >&2
+    exit 1
+  fi
+else
+  echo "==> Use provided SYNFACTORY_TEST_DATABASE_URL"
+fi
 
 echo "==> Verify module metadata"
 go mod tidy
