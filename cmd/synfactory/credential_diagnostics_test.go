@@ -30,8 +30,8 @@ func TestCredentialDiagnosticsExposeMetadataWithoutSecretValues(t *testing.T) {
 	t.Setenv("SYNFACTORY_GITHUB_TOKEN", "provider-secret")
 	mux := http.NewServeMux()
 	registerCredentialDiagnostics(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, config.Config{
-		OperatorToken:        "legacy-operator-value",
-		GitHubWebhookSecret:  "legacy-webhook-value",
+		OperatorToken:           "legacy-operator-value",
+		GitHubWebhookSecret:     "legacy-webhook-value",
 		GitHubOAuthClientSecret: "legacy-oauth-value",
 	})
 
