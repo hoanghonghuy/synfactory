@@ -16,6 +16,16 @@ func (p healthTestProvider) Resolve(context.Context, string) (Value, error) {
 	return p.value, p.err
 }
 
+type metadataHealthTestProvider struct {
+	healthTestProvider
+	metadata CredentialMetadata
+	err      error
+}
+
+func (p metadataHealthTestProvider) Metadata(context.Context, string) (CredentialMetadata, error) {
+	return p.metadata, p.err
+}
+
 func TestTrackingProviderRecordsSuccessfulUseWithoutSecretMaterial(t *testing.T) {
 	provider := NewTrackingProvider(healthTestProvider{value: newValue([]byte("super-secret"), "env")})
 	provider.now = func() time.Time { return time.Date(2026, 9, 7, 6, 0, 0, 0, time.UTC) }
@@ -38,6 +48,38 @@ func TestTrackingProviderRecordsSuccessfulUseWithoutSecretMaterial(t *testing.T)
 	}
 	if health.LastSuccessfulUse != provider.now() {
 		t.Fatalf("last successful use = %v, want %v", health.LastSuccessfulUse, provider.now())
+	}
+}
+
+func TestTrackingProviderCollectsOptionalProviderMetadata(t *testing.T) {
+	created := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	expires := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	provider := NewTrackingProvider(metadataHealthTestProvider{
+		healthTestProvider: healthTestProvider{value: newValue([]byte("secret"), "file")},
+		metadata:           CredentialMetadata{CreatedAt: created, ExpiresAt: expires},
+	})
+
+	if _, err := provider.Resolve(t.Context(), "github/token"); err != nil {
+		t.Fatal(err)
+	}
+	health := provider.Snapshot()[0]
+	if !health.CreatedAt.Equal(created) || !health.ExpiresAt.Equal(expires) {
+		t.Fatalf("provider metadata not tracked: %#v", health)
+	}
+}
+
+func TestTrackingProviderIgnoresMetadataFailureAfterSuccessfulResolve(t *testing.T) {
+	provider := NewTrackingProvider(metadataHealthTestProvider{
+		healthTestProvider: healthTestProvider{value: newValue([]byte("secret"), "file")},
+		err:                errors.New("metadata unavailable"),
+	})
+
+	if _, err := provider.Resolve(t.Context(), "github/token"); err != nil {
+		t.Fatalf("Resolve() inherited metadata error: %v", err)
+	}
+	health := provider.Snapshot()[0]
+	if !health.Available || !health.CreatedAt.IsZero() || !health.ExpiresAt.IsZero() {
+		t.Fatalf("health = %#v", health)
 	}
 }
 
