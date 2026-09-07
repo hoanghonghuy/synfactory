@@ -38,8 +38,8 @@ type TrackingProvider struct {
 	provider Provider
 	now      func() time.Time
 
-	mu      sync.RWMutex
-	health  map[string]CredentialHealth
+	mu     sync.RWMutex
+	health map[string]CredentialHealth
 }
 
 func NewTrackingProvider(provider Provider) *TrackingProvider {
