@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +16,7 @@ import (
 func TestCredentialDiagnosticsRequireSecurityPolicy(t *testing.T) {
 	t.Setenv("SYNFACTORY_SECRET_PROVIDER", "env")
 	mux := http.NewServeMux()
-	registerCredentialDiagnostics(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, config.Config{})
+	registerCredentialDiagnostics(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, config.Config{}, &recordingSecurityAuditWriter{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/security/credentials", nil)
 	res := httptest.NewRecorder()
@@ -29,11 +30,12 @@ func TestCredentialDiagnosticsExposeMetadataWithoutSecretValues(t *testing.T) {
 	t.Setenv("SYNFACTORY_SECRET_PROVIDER", "env")
 	t.Setenv("SYNFACTORY_GITHUB_TOKEN", "provider-secret")
 	mux := http.NewServeMux()
+	audit := &recordingSecurityAuditWriter{}
 	registerCredentialDiagnostics(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, config.Config{
 		OperatorToken:           "legacy-operator-value",
 		GitHubWebhookSecret:     "legacy-webhook-value",
 		GitHubOAuthClientSecret: "legacy-oauth-value",
-	})
+	}, audit)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/security/credentials", nil)
 	req.Header.Set("Authorization", "Bearer operator-secret")
@@ -41,6 +43,9 @@ func TestCredentialDiagnosticsExposeMetadataWithoutSecretValues(t *testing.T) {
 	mux.ServeHTTP(res, req)
 	if res.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "security.credentials.read" {
+		t.Fatalf("audit events = %#v", audit.events)
 	}
 
 	body := res.Body.String()
@@ -66,13 +71,26 @@ func TestCredentialDiagnosticsExposeMetadataWithoutSecretValues(t *testing.T) {
 	}
 }
 
+func TestCredentialDiagnosticsFailClosedWhenAuditUnavailable(t *testing.T) {
+	t.Setenv("SYNFACTORY_SECRET_PROVIDER", "env")
+	mux := http.NewServeMux()
+	registerCredentialDiagnostics(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, config.Config{}, &recordingSecurityAuditWriter{err: errors.New("down")})
+	req := httptest.NewRequest(http.MethodGet, "/api/security/credentials", nil)
+	req.Header.Set("Authorization", "Bearer operator-secret")
+	res := httptest.NewRecorder()
+	mux.ServeHTTP(res, req)
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusServiceUnavailable)
+	}
+}
+
 func TestCredentialDiagnosticsReportPresentEmptySecretUnavailable(t *testing.T) {
 	t.Setenv("SYNFACTORY_SECRET_PROVIDER", "env")
 	t.Setenv("SYNFACTORY_GITHUB_TOKEN", "")
 	mux := http.NewServeMux()
 	registerCredentialDiagnostics(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, config.Config{
 		GitHubToken: "legacy-token-must-not-revive",
-	})
+	}, &recordingSecurityAuditWriter{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/security/credentials", nil)
 	req.Header.Set("Authorization", "Bearer operator-secret")
