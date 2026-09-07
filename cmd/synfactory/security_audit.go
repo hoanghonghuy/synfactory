@@ -41,7 +41,7 @@ type securityAuditRetentionResponse struct {
 	Deleted int64 `json:"deleted"`
 }
 
-func registerSecurityAudit(mux *http.ServeMux, authorizer authz.RequestAuthorizer, operations securityAuditOperations, audit securityAuditWriter) {
+func registerSecurityAudit(mux *http.ServeMux, authorizer authz.RequestAuthorizer, reader securityAuditReader, audit securityAuditWriter) {
 	mux.HandleFunc("GET /api/security/audit", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := authorizeSecurityAudit(w, r, authorizer)
 		if !ok {
@@ -52,7 +52,7 @@ func registerSecurityAudit(mux *http.ServeMux, authorizer authz.RequestAuthorize
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		events, err := operations.ListSecurityAudit(r.Context(), filter)
+		events, err := reader.ListSecurityAudit(r.Context(), filter)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "security audit unavailable"})
 			return
@@ -67,6 +67,11 @@ func registerSecurityAudit(mux *http.ServeMux, authorizer authz.RequestAuthorize
 	mux.HandleFunc("GET /api/security/audit/export", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := authorizeSecurityAudit(w, r, authorizer)
 		if !ok {
+			return
+		}
+		operations, ok := reader.(securityAuditOperations)
+		if !ok {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "security audit operations unavailable"})
 			return
 		}
 		filter, err := securityAuditFilter(r)
@@ -99,6 +104,11 @@ func registerSecurityAudit(mux *http.ServeMux, authorizer authz.RequestAuthorize
 		if !ok {
 			return
 		}
+		operations, ok := reader.(securityAuditOperations)
+		if !ok {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "security audit operations unavailable"})
+			return
+		}
 		request, err := decodeSecurityAuditRetentionRequest(r)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -113,8 +123,6 @@ func registerSecurityAudit(mux *http.ServeMux, authorizer authz.RequestAuthorize
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be between 1 and 5000"})
 			return
 		}
-		// Persist attribution before mutation. A failed audit append stops the prune,
-		// so an operator cannot successfully mutate retention without a durable trace.
 		if err := appendSecurityAudit(r.Context(), audit, principal, "security.audit.retention", "security_audit", "retention", "requested"); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "security audit unavailable"})
 			return
@@ -191,8 +199,7 @@ func containsSensitiveAuditField(value any) bool {
 
 func sensitiveAuditFieldKey(key string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(key))
-	replacer := strings.NewReplacer("-", "_", ".", "_", " ", "_")
-	normalized = replacer.Replace(normalized)
+	normalized = strings.NewReplacer("-", "_", ".", "_", " ", "_").Replace(normalized)
 	for _, marker := range []string{
 		"secret", "token", "authorization", "cookie", "password", "private_key", "api_key",
 		"raw_terminal", "terminal_input", "terminal_output", "stdin", "stdout", "stderr",

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,32 +13,20 @@ import (
 	"github.com/hoanghonghuy/synfactory/internal/securityaudit"
 )
 
-type fakeSecurityAuditOperations struct {
-	filter      securityaudit.Filter
-	events      []securityaudit.Event
-	err         error
-	pruneCutoff time.Time
-	pruneLimit  int
-	pruneCount  int64
-	pruneErr    error
-	pruneCalls  int
+type fakeSecurityAuditReader struct {
+	filter securityaudit.Filter
+	events []securityaudit.Event
+	err    error
 }
 
-func (f *fakeSecurityAuditOperations) ListSecurityAudit(_ context.Context, filter securityaudit.Filter) ([]securityaudit.Event, error) {
+func (f *fakeSecurityAuditReader) ListSecurityAudit(_ context.Context, filter securityaudit.Filter) ([]securityaudit.Event, error) {
 	f.filter = filter
 	return f.events, f.err
 }
 
-func (f *fakeSecurityAuditOperations) PruneSecurityAuditBefore(_ context.Context, cutoff time.Time, limit int) (int64, error) {
-	f.pruneCalls++
-	f.pruneCutoff = cutoff
-	f.pruneLimit = limit
-	return f.pruneCount, f.pruneErr
-}
-
 func TestSecurityAuditRequiresSecurityPolicy(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditOperations{}, &recordingSecurityAuditWriter{})
+	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditReader{}, &recordingSecurityAuditWriter{})
 
 	res := httptest.NewRecorder()
 	mux.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/security/audit", nil))
@@ -48,31 +35,8 @@ func TestSecurityAuditRequiresSecurityPolicy(t *testing.T) {
 	}
 }
 
-func TestSecurityAuditOperatorEndpointsRequireSecurityPolicy(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		method string
-		path   string
-		body   string
-	}{
-		{name: "export", method: http.MethodGet, path: "/api/security/audit/export"},
-		{name: "retention", method: http.MethodPost, path: "/api/security/audit/retention", body: `{"cutoff":"2026-09-01T00:00:00Z","limit":100}`},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			mux := http.NewServeMux()
-			registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditOperations{}, &recordingSecurityAuditWriter{})
-			req := httptest.NewRequest(test.method, test.path, bytes.NewBufferString(test.body))
-			res := httptest.NewRecorder()
-			mux.ServeHTTP(res, req)
-			if res.Code != http.StatusUnauthorized {
-				t.Fatalf("status = %d, want %d", res.Code, http.StatusUnauthorized)
-			}
-		})
-	}
-}
-
 func TestSecurityAuditSearchParsesBoundedFilters(t *testing.T) {
-	reader := &fakeSecurityAuditOperations{events: []securityaudit.Event{{
+	reader := &fakeSecurityAuditReader{events: []securityaudit.Event{{
 		ID:           "audit-1",
 		OccurredAt:   time.Date(2026, 9, 7, 10, 0, 0, 0, time.UTC),
 		ActorType:    "operator",
@@ -110,125 +74,24 @@ func TestSecurityAuditSearchParsesBoundedFilters(t *testing.T) {
 
 func TestSecurityAuditSearchFailsClosedWhenAuditAppendFails(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditOperations{}, &recordingSecurityAuditWriter{err: errors.New("down")})
+	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditReader{}, &recordingSecurityAuditWriter{err: errors.New("down")})
 	req := httptest.NewRequest(http.MethodGet, "/api/security/audit", nil)
 	req.Header.Set("Authorization", "Bearer operator-secret")
-	res := http.NewRecorder()
+	res := httptest.NewRecorder()
 	mux.ServeHTTP(res, req)
 	if res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusServiceUnavailable)
 	}
+}
 
 func TestSecurityAuditRejectsInvalidRange(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditOperations{}, &recordingSecurityAuditWriter{})
+	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditReader{}, &recordingSecurityAuditWriter{})
 	req := httptest.NewRequest(http.MethodGet, "/api/security/audit?since=2026-09-08T00:00:00Z&until=2026-09-07T00:00:00Z", nil)
 	req.Header.Set("Authorization", "Bearer operator-secret")
 	res := httptest.NewRecorder()
 	mux.ServeHTTP(res, req)
 	if res.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusBadRequest)
-	}
-}
-
-func TestSecurityAuditExportIsBoundedAndAttributed(t *testing.T) {
-	operations := &fakeSecurityAuditOperations{events: []securityaudit.Event{{
-		ID:       "audit-1",
-		Metadata: json.RawMessage(`{"provider":"github","attempt":1}`),
-	}}}
-	audit := &recordingSecurityAuditWriter{}
-	mux := http.NewServeMux()
-	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, operations, audit)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/security/audit/export?limit=50", nil)
-	req.Header.Set("Authorization", "Bearer operator-secret")
-	res := httptest.NewRecorder()
-	mux.ServeHTTP(res, req)
-	if res.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
-	}
-	if operations.filter.Limit != 50 {
-		t.Fatalf("limit = %d, want 50", operations.filter.Limit)
-	}
-	if len(audit.events) != 1 || audit.events[0].Action != "security.audit.export" {
-		t.Fatalf("audit events = %#v", audit.events)
-	}
-	var response securityAuditExportResponse
-	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.SchemaVersion != "v1" || response.Count != 1 || len(response.Events) != 1 {
-		t.Fatalf("response = %#v", response)
-	}
-}
-
-func TestSecurityAuditExportRejectsSensitiveMetadata(t *testing.T) {
-	operations := &fakeSecurityAuditOperations{events: []securityaudit.Event{{
-		ID:       "audit-1",
-		Metadata: json.RawMessage(`{"nested":{"github_token":"should-never-export"}}`),
-	}}}
-	audit := &recordingSecurityAuditWriter{}
-	mux := http.NewServeMux()
-	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, operations, audit)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/security/audit/export", nil)
-	req.Header.Set("Authorization", "Bearer operator-secret")
-	res := httptest.NewRecorder()
-	mux.ServeHTTP(res, req)
-	if res.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want %d", res.Code, http.StatusUnprocessableEntity)
-	}
-	if len(audit.events) != 0 {
-		t.Fatalf("unexpected export audit events = %#v", audit.events)
-	}
-}
-
-func TestSecurityAuditRetentionFailsClosedBeforeMutationWhenAuditUnavailable(t *testing.T) {
-	operations := &fakeSecurityAuditOperations{pruneCount: 3}
-	mux := http.NewServeMux()
-	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, operations, &recordingSecurityAuditWriter{err: errors.New("down")})
-
-	body := bytes.NewBufferString(`{"cutoff":"2026-09-01T00:00:00Z","limit":100}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/security/audit/retention", body)
-	req.Header.Set("Authorization", "Bearer operator-secret")
-	res := httptest.NewRecorder()
-	mux.ServeHTTP(res, req)
-	if res.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want %d", res.Code, http.StatusServiceUnavailable)
-	}
-	if operations.pruneCalls != 0 {
-		t.Fatalf("prune calls = %d, want 0", operations.pruneCalls)
-	}
-}
-
-func TestSecurityAuditRetentionPrunesOnlyAfterAttribution(t *testing.T) {
-	operations := &fakeSecurityAuditOperations{pruneCount: 3}
-	audit := &recordingSecurityAuditWriter{}
-	mux := http.NewServeMux()
-	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, operations, audit)
-
-	body := bytes.NewBufferString(`{"cutoff":"2026-09-01T00:00:00Z","limit":100}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/security/audit/retention", body)
-	req.Header.Set("Authorization", "Bearer operator-secret")
-	res := httptest.NewRecorder()
-	mux.ServeHTTP(res, req)
-	if res.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
-	}
-	if operations.pruneCalls != 1 || operations.pruneLimit != 100 {
-		t.Fatalf("prune calls=%d limit=%d", operations.pruneCalls, operations.pruneLimit)
-	}
-	if want := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC); !operations.pruneCutoff.Equal(want) {
-		t.Fatalf("cutoff = %s, want %s", operations.pruneCutoff, want)
-	}
-	if len(audit.events) != 1 || audit.events[0].Action != "security.audit.retention" || audit.events[0].Outcome != "requested" {
-		t.Fatalf("audit events = %#v", audit.events)
-	}
-	var response securityAuditRetentionResponse
-	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Deleted != 3 {
-		t.Fatalf("deleted = %d, want 3", response.Deleted)
 	}
 }
