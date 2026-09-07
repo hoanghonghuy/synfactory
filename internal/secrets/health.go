@@ -70,6 +70,14 @@ func NewTrackingProvider(provider Provider) *TrackingProvider {
 func (p *TrackingProvider) Resolve(ctx context.Context, logicalName string) (Value, error) {
 	value, err := p.provider.Resolve(ctx, logicalName)
 	now := p.now().UTC()
+	var sourceMetadata CredentialMetadata
+	if err == nil {
+		if provider, ok := p.provider.(MetadataProvider); ok {
+			if metadata, metadataErr := provider.Metadata(ctx, logicalName); metadataErr == nil {
+				sourceMetadata = metadata
+			}
+		}
+	}
 
 	p.mu.Lock()
 	health := p.health[logicalName]
@@ -81,6 +89,7 @@ func (p *TrackingProvider) Resolve(ctx context.Context, logicalName string) (Val
 		health.Provider = value.Provider
 		health.LastSuccessfulUse = now
 		health.Available = true
+		mergeCredentialMetadata(&health, sourceMetadata)
 	} else {
 		health.LastFailure = now
 		health.Available = false
@@ -132,13 +141,23 @@ func (p *TrackingProvider) Register(logicalName string, metadata CredentialMetad
 
 	health := p.health[logicalName]
 	health.LogicalName = logicalName
-	health.Owner = metadata.Owner
-	health.CreatedAt = metadata.CreatedAt.UTC()
-	health.ExpiresAt = metadata.ExpiresAt.UTC()
+	mergeCredentialMetadata(&health, metadata)
 	if health.RotationState == "" {
 		health.RotationState = RotationStable
 	}
 	p.health[logicalName] = health
+}
+
+func mergeCredentialMetadata(health *CredentialHealth, metadata CredentialMetadata) {
+	if metadata.Owner != "" {
+		health.Owner = metadata.Owner
+	}
+	if !metadata.CreatedAt.IsZero() {
+		health.CreatedAt = metadata.CreatedAt.UTC()
+	}
+	if !metadata.ExpiresAt.IsZero() {
+		health.ExpiresAt = metadata.ExpiresAt.UTC()
+	}
 }
 
 func (p *TrackingProvider) MarkRotation(logicalName string, state RotationState) {
