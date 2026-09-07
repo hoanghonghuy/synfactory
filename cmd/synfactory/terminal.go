@@ -39,11 +39,15 @@ func configureTerminal(cfg config.Config, authorizer authz.RequestAuthorizer) (*
 		terminal.TargetSSH:   terminal.SSHBackend{},
 	})
 	if cfg.TerminalEnabled {
-		audit, err := terminal.NewFileAuditSink(terminalAuditPath)
+		durableAudit, err := newTerminalSecurityAuditSink(authorizer)
+		if err != nil {
+			return nil, fmt.Errorf("configure durable terminal security audit: %w", err)
+		}
+		fileAudit, err := terminal.NewFileAuditSink(terminalAuditPath)
 		if err != nil {
 			return nil, fmt.Errorf("configure terminal audit: %w", err)
 		}
-		manager.SetAuditSink(audit)
+		manager.SetAuditSink(terminalAuditFanout{durableAudit, fileAudit})
 	}
 	legacyEnableFlag := strings.TrimSpace(cfg.OperatorToken)
 	if legacyEnableFlag == "" && authorizer != nil {
