@@ -1,6 +1,7 @@
 import { createApp, nextTick } from 'vue'
 import AuthGate from './AuthGate.vue'
 import AttentionInbox from './AttentionInbox.vue'
+import AutonomyHealth from './AutonomyHealth.vue'
 import RuntimeUsageDock from './RuntimeUsageDock.vue'
 import TerminalDock from './TerminalDock.vue'
 import './style.css'
@@ -27,6 +28,11 @@ const attentionRoot = document.createElement('div')
 attentionRoot.id = 'attention-root'
 document.body.appendChild(attentionRoot)
 createApp(AttentionInbox).mount(attentionRoot)
+
+const healthRoot = document.createElement('div')
+healthRoot.id = 'autonomy-health-root'
+document.body.appendChild(healthRoot)
+createApp(AutonomyHealth).mount(healthRoot)
 
 const usageRoot = document.createElement('div')
 usageRoot.id = 'runtime-usage-root'

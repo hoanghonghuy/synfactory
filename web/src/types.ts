@@ -1,13 +1,23 @@
 export type OperationalStats = {
   queued_jobs: number
   active_jobs: number
+  failed_jobs: number
   stale_job_leases: number
   pending_events: number
-  failed_events: number
+  failed_events?: number
   blocked_workflows: number
   parked_workflows: number
   live_workers: number
   stale_workers: number
+  active_workflows: number
+  stuck_workflows: number
+  repairing_workflows: number
+  exhausted_repair_budgets: number
+  completed_workflows_24h: number
+  recovered_workflows_24h: number
+  workflow_actions_24h: number
+  completed_actions_24h: number
+  useful_work_ratio_24h: number
 }
 
 export type Repository = {
