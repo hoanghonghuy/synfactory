@@ -113,12 +113,11 @@ func TestSecurityAuditSearchFailsClosedWhenAuditAppendFails(t *testing.T) {
 	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditOperations{}, &recordingSecurityAuditWriter{err: errors.New("down")})
 	req := httptest.NewRequest(http.MethodGet, "/api/security/audit", nil)
 	req.Header.Set("Authorization", "Bearer operator-secret")
-	res := httptest.NewRecorder()
+	res := http.NewRecorder()
 	mux.ServeHTTP(res, req)
 	if res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusServiceUnavailable)
 	}
-}
 
 func TestSecurityAuditRejectsInvalidRange(t *testing.T) {
 	mux := http.NewServeMux()
