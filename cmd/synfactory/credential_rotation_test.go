@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -52,6 +53,22 @@ func TestCredentialRotationStagePromoteUsesServerOwnedCandidate(t *testing.T) {
 	after, err := provider.Resolve(t.Context(), "operator/token")
 	if err != nil || string(after.CloneBytes()) != "next-operator" {
 		t.Fatalf("active after promote=%q err=%v", string(after.CloneBytes()), err)
+	}
+	liveAuthorizer := authz.LegacyTokenAuthorizer{
+		Token: "active-operator",
+		ResolveToken: func(ctx context.Context) (string, error) {
+			return secrets.ResolveOptionalString(ctx, provider, "operator/token", "active-operator")
+		},
+	}
+	nextRequest := httptest.NewRequest(http.MethodGet, "/api/security/credentials", nil)
+	nextRequest.Header.Set("Authorization", "Bearer next-operator")
+	if _, err := liveAuthorizer.Authorize(nextRequest, authz.PermissionSecurityPolicy, ""); err != nil {
+		t.Fatalf("future authorization did not observe promoted credential: %v", err)
+	}
+	oldRequest := httptest.NewRequest(http.MethodGet, "/api/security/credentials", nil)
+	oldRequest.Header.Set("Authorization", "Bearer active-operator")
+	if _, err := liveAuthorizer.Authorize(oldRequest, authz.PermissionSecurityPolicy, ""); !errors.Is(err, authz.ErrUnauthenticated) {
+		t.Fatalf("old credential remained authoritative after promotion: %v", err)
 	}
 	if len(audit.events) != 2 || audit.events[0].Action != "security.credentials.rotation.stage" || audit.events[1].Action != "security.credentials.rotation.promote" {
 		t.Fatalf("audit=%#v", audit.events)
