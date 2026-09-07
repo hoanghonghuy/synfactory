@@ -1,8 +1,10 @@
 package authz
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -16,12 +18,18 @@ type RequestAuthorizer interface {
 	Authorize(r *http.Request, permission Permission, repositoryID string) (Principal, error)
 }
 
+type TokenResolver func(context.Context) (string, error)
+
 type LegacyTokenAuthorizer struct {
-	Token string
+	Token        string
+	ResolveToken TokenResolver
 }
 
 func (a LegacyTokenAuthorizer) Authorize(r *http.Request, permission Permission, repositoryID string) (Principal, error) {
-	expected := strings.TrimSpace(a.Token)
+	expected, err := a.expectedToken(r.Context())
+	if err != nil {
+		return Principal{}, err
+	}
 	if expected == "" {
 		return Principal{}, ErrUnauthenticated
 	}
@@ -42,4 +50,15 @@ func (a LegacyTokenAuthorizer) Authorize(r *http.Request, permission Permission,
 		return Principal{}, ErrForbidden
 	}
 	return principal, nil
+}
+
+func (a LegacyTokenAuthorizer) expectedToken(ctx context.Context) (string, error) {
+	if a.ResolveToken == nil {
+		return strings.TrimSpace(a.Token), nil
+	}
+	resolved, err := a.ResolveToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("%w: legacy token resolver unavailable", ErrUnauthenticated)
+	}
+	return strings.TrimSpace(resolved), nil
 }
