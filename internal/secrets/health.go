@@ -91,6 +91,24 @@ func (p *TrackingProvider) Resolve(ctx context.Context, logicalName string) (Val
 	return value, err
 }
 
+// RecordAvailable records effective credential availability when compatibility
+// resolution succeeds outside the decorated provider, for example through a
+// legacy configuration fallback. It stores only provider metadata.
+func (p *TrackingProvider) RecordAvailable(logicalName, provider string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	health := p.health[logicalName]
+	health.LogicalName = logicalName
+	health.Provider = provider
+	health.LastSuccessfulUse = p.now().UTC()
+	health.Available = true
+	if health.RotationState == "" {
+		health.RotationState = RotationStable
+	}
+	p.health[logicalName] = health
+}
+
 func (p *TrackingProvider) Register(logicalName string, metadata CredentialMetadata) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
