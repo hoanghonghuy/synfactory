@@ -22,8 +22,8 @@ func registerAuthAPI(mux *http.ServeMux, store *postgres.Store, authorizer authz
 		Issuer:     issuer,
 	}
 	handler.Register(mux)
-	registerCredentialDiagnostics(mux, authorizer, cfg)
-	registerSecurityAudit(mux, authorizer, store)
+	registerCredentialDiagnostics(mux, authorizer, cfg, store)
+	registerSecurityAudit(mux, authorizer, store, store)
 
 	if cfg.GitHubOAuthClientID == "" {
 		return
