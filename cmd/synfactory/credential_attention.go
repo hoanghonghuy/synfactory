@@ -74,7 +74,7 @@ func reconcileCredentialAttention(ctx context.Context, store credentialAttention
 
 	activeByKey := make(map[string]attention.Item, len(active))
 	for _, item := range active {
-		if item.Kind == attention.KindCredential {
+		if item.Kind == attention.KindCredential && item.ID == credentialAttentionID(item.DedupeKey) {
 			activeByKey[item.DedupeKey] = item
 		}
 	}
