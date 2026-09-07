@@ -34,6 +34,9 @@ func registerAuthAPIWithSecretProvider(mux *http.ServeMux, store *postgres.Store
 	handler.Register(mux)
 	registerCredentialDiagnosticsWithProvider(mux, authorizer, cfg, store, provider)
 	registerSecurityAudit(mux, authorizer, store, store)
+	if rotating, ok := provider.(*secrets.RotatingProvider); ok {
+		registerCredentialRotation(mux, authorizer, store, rotating)
+	}
 
 	if cfg.GitHubOAuthClientID == "" {
 		return
