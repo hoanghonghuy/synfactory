@@ -22,8 +22,7 @@ func (s *Store) AppendSecurityAudit(ctx context.Context, event securityaudit.Eve
 INSERT INTO security_audit_events (
     id, occurred_at, actor_type, actor_id, action,
     resource_type, resource_id, outcome, request_id, metadata
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-ON CONFLICT (id) DO NOTHING`,
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		event.ID,
 		event.OccurredAt.UTC(),
 		strings.TrimSpace(event.ActorType),
