@@ -5,8 +5,26 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hoanghonghuy/synfactory/internal/config"
 	"github.com/hoanghonghuy/synfactory/internal/secrets"
 )
+
+func TestConfiguredGitHubClientFallsBackToLegacyPATWhenLogicalSecretMissing(t *testing.T) {
+	t.Setenv("SYNFACTORY_SECRET_PROVIDER", "file")
+	t.Setenv("SYNFACTORY_SECRET_FILE_ROOT", t.TempDir())
+
+	client, enabled, err := configuredGitHubClient(config.Config{
+		GitHubAuthMode: "pat",
+		GitHubAPIURL:   "https://api.github.com",
+		GitHubToken:    "legacy-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled || client == nil {
+		t.Fatal("configuredGitHubClient() disabled, want legacy PAT fallback enabled")
+	}
+}
 
 func TestResolveGitHubAppPrivateKeyPrefersLogicalProvider(t *testing.T) {
 	t.Setenv("SYNFACTORY_GITHUB_APP_PRIVATE_KEY", "provider-key")
