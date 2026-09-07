@@ -109,6 +109,23 @@ func (p *TrackingProvider) RecordAvailable(logicalName, provider string) {
 	p.health[logicalName] = health
 }
 
+// RecordUnavailable overrides an optimistic provider resolution when semantic
+// validation rejects the effective credential, while retaining metadata only.
+func (p *TrackingProvider) RecordUnavailable(logicalName, provider string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	health := p.health[logicalName]
+	health.LogicalName = logicalName
+	health.Provider = provider
+	health.LastFailure = p.now().UTC()
+	health.Available = false
+	if health.RotationState == "" {
+		health.RotationState = RotationStable
+	}
+	p.health[logicalName] = health
+}
+
 func (p *TrackingProvider) Register(logicalName string, metadata CredentialMetadata) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
