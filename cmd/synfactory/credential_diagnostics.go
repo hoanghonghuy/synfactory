@@ -79,9 +79,10 @@ func legacyPrivateKeyFileAvailable(path string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-func registerCredentialDiagnostics(mux *http.ServeMux, authorizer authz.RequestAuthorizer, cfg config.Config) {
+func registerCredentialDiagnostics(mux *http.ServeMux, authorizer authz.RequestAuthorizer, cfg config.Config, audit securityAuditWriter) {
 	mux.HandleFunc("GET /api/security/credentials", func(w http.ResponseWriter, r *http.Request) {
-		if _, err := authorizer.Authorize(r, authz.PermissionSecurityPolicy, ""); err != nil {
+		principal, err := authorizer.Authorize(r, authz.PermissionSecurityPolicy, "")
+		if err != nil {
 			status := http.StatusForbidden
 			if errors.Is(err, authz.ErrUnauthenticated) {
 				status = http.StatusUnauthorized
@@ -93,6 +94,10 @@ func registerCredentialDiagnostics(mux *http.ServeMux, authorizer authz.RequestA
 		diagnostics, err := credentialDiagnostics(r.Context(), cfg, time.Now())
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "credential provider unavailable"})
+			return
+		}
+		if err := appendSecurityAudit(r.Context(), audit, principal, "security.credentials.read", "security_credentials", "", "success"); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "security audit unavailable"})
 			return
 		}
 		writeJSON(w, http.StatusOK, credentialDiagnosticsResponse{Credentials: diagnostics})
