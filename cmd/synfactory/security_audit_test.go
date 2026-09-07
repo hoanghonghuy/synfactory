@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,16 +16,17 @@ import (
 type fakeSecurityAuditReader struct {
 	filter securityaudit.Filter
 	events []securityaudit.Event
+	err    error
 }
 
 func (f *fakeSecurityAuditReader) ListSecurityAudit(_ context.Context, filter securityaudit.Filter) ([]securityaudit.Event, error) {
 	f.filter = filter
-	return f.events, nil
+	return f.events, f.err
 }
 
 func TestSecurityAuditRequiresSecurityPolicy(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditReader{})
+	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditReader{}, &recordingSecurityAuditWriter{})
 
 	res := httptest.NewRecorder()
 	mux.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/security/audit", nil))
@@ -44,8 +46,9 @@ func TestSecurityAuditSearchParsesBoundedFilters(t *testing.T) {
 		ResourceID:   "github/token",
 		Outcome:      "success",
 	}}}
+	audit := &recordingSecurityAuditWriter{}
 	mux := http.NewServeMux()
-	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, reader)
+	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, reader, audit)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/security/audit?actor_id=user-1&action=credential.rotation.stage&resource_type=credential&resource_id=github%2Ftoken&outcome=success&since=2026-09-07T09:00:00Z&until=2026-09-07T11:00:00Z&limit=25", nil)
 	req.Header.Set("Authorization", "Bearer operator-secret")
@@ -57,6 +60,9 @@ func TestSecurityAuditSearchParsesBoundedFilters(t *testing.T) {
 	if reader.filter.ActorID != "user-1" || reader.filter.ResourceID != "github/token" || reader.filter.Limit != 25 {
 		t.Fatalf("filter = %#v", reader.filter)
 	}
+	if len(audit.events) != 1 || audit.events[0].Action != "security.audit.read" {
+		t.Fatalf("audit events = %#v", audit.events)
+	}
 	var response securityAuditResponse
 	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
@@ -66,9 +72,21 @@ func TestSecurityAuditSearchParsesBoundedFilters(t *testing.T) {
 	}
 }
 
+func TestSecurityAuditSearchFailsClosedWhenAuditAppendFails(t *testing.T) {
+	mux := http.NewServeMux()
+	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditReader{}, &recordingSecurityAuditWriter{err: errors.New("down")})
+	req := httptest.NewRequest(http.MethodGet, "/api/security/audit", nil)
+	req.Header.Set("Authorization", "Bearer operator-secret")
+	res := httptest.NewRecorder()
+	mux.ServeHTTP(res, req)
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusServiceUnavailable)
+	}
+}
+
 func TestSecurityAuditRejectsInvalidRange(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditReader{})
+	registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditReader{}, &recordingSecurityAuditWriter{})
 	req := httptest.NewRequest(http.MethodGet, "/api/security/audit?since=2026-09-08T00:00:00Z&until=2026-09-07T00:00:00Z", nil)
 	req.Header.Set("Authorization", "Bearer operator-secret")
 	res := httptest.NewRecorder()
