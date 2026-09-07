@@ -48,3 +48,9 @@ func TestValidateMetadataRejectsOversize(t *testing.T) {
 		t.Fatal("ValidateMetadata() error = nil, want oversize error")
 	}
 }
+
+func TestValidateMetadataRejectsTrailingJSON(t *testing.T) {
+	if err := ValidateMetadata(json.RawMessage(`{"provider":"file"}{"provider":"env"}`)); err == nil {
+		t.Fatal("ValidateMetadata() error = nil, want trailing JSON error")
+	}
+}
