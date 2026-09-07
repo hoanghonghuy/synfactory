@@ -27,7 +27,9 @@ type RuntimeConfig struct {
 	BaseURL                string            `json:"base_url,omitempty"`
 	APIStyle               string            `json:"api_style,omitempty"`
 	APIKeyEnv              string            `json:"api_key_env,omitempty"`
+	APIKeySecret           string            `json:"api_key_secret,omitempty"`
 	SecretEnv              []string          `json:"secret_env,omitempty"`
+	SecretRefs             map[string]string `json:"secret_refs,omitempty"`
 	Env                    map[string]string `json:"env,omitempty"`
 	ExtraArgs              []string          `json:"extra_args,omitempty"`
 	AutoApprove            bool              `json:"auto_approve,omitempty"`
@@ -35,6 +37,9 @@ type RuntimeConfig struct {
 	BudgetInputTokenLimit  int64             `json:"budget_input_token_limit,omitempty"`
 	BudgetOutputTokenLimit int64             `json:"budget_output_token_limit,omitempty"`
 	RoutingCapabilityScore int64             `json:"routing_capability_score,omitempty"`
+
+	resolvedAPIKey       string
+	resolvedSecretValues []string
 }
 
 type CandidateConfig struct {
@@ -112,6 +117,11 @@ func (c Config) Validate() error {
 		if runtimeCfg.RoutingCapabilityScore < 0 || runtimeCfg.RoutingCapabilityScore > 100 {
 			return fmt.Errorf("runtime %q routing capability score must be between 0 and 100", name)
 		}
+		for envName, logicalName := range runtimeCfg.SecretRefs {
+			if strings.TrimSpace(envName) == "" || strings.TrimSpace(logicalName) == "" {
+				return fmt.Errorf("runtime %q has invalid secret_refs entry", name)
+			}
+		}
 		switch runtimeCfg.Kind {
 		case ProviderCodex, ProviderCursor, ProviderAntigravity, ProviderClaude, ProviderOpenCode:
 		case ProviderOpenAI:
@@ -158,18 +168,23 @@ func (r RoleConfig) effectiveFallbackOn() map[FailureClass]bool {
 }
 
 func (r RuntimeConfig) secretValues() []string {
+	values := append([]string(nil), r.resolvedSecretValues...)
 	names := append([]string(nil), r.SecretEnv...)
-	if r.APIKeyEnv != "" {
+	if r.APIKeyEnv != "" && r.resolvedAPIKey == "" {
 		names = append(names, r.APIKeyEnv)
 	}
-	values := make([]string, 0, len(names))
 	seen := map[string]bool{}
+	for _, value := range values {
+		if value != "" {
+			seen[value] = true
+		}
+	}
 	for _, name := range names {
-		if name == "" || seen[name] {
+		if name == "" {
 			continue
 		}
-		seen[name] = true
-		if value := os.Getenv(name); value != "" {
+		if value := os.Getenv(name); value != "" && !seen[value] {
+			seen[value] = true
 			values = append(values, value)
 		}
 	}

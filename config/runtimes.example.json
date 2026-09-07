@@ -4,12 +4,14 @@
       "kind": "codex",
       "binary": "codex",
       "secret_env": ["OPENAI_API_KEY"],
+      "secret_refs": {"OPENAI_API_KEY": "runtime/openai-api-key"},
       "routing_capability_score": 85
     },
     "cursor-primary": {
       "kind": "cursor",
       "binary": "cursor-agent",
       "secret_env": ["CURSOR_API_KEY"],
+      "secret_refs": {"CURSOR_API_KEY": "runtime/cursor-api-key"},
       "auto_approve": false,
       "routing_capability_score": 80
     },
@@ -23,6 +25,7 @@
       "kind": "claude",
       "binary": "claude",
       "secret_env": ["ANTHROPIC_API_KEY"],
+      "secret_refs": {"ANTHROPIC_API_KEY": "runtime/anthropic-api-key"},
       "auto_approve": false,
       "routing_capability_score": 90
     },
@@ -37,6 +40,7 @@
       "base_url": "http://host.docker.internal:20128/v1",
       "api_style": "responses",
       "api_key_env": "SYNFACTORY_ROUTER_API_KEY",
+      "api_key_secret": "runtime/router-api-key",
       "model": "replace-with-router-model",
       "routing_capability_score": 50
     }

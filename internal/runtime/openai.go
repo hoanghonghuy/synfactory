@@ -15,13 +15,14 @@ import (
 )
 
 type OpenAIAdapter struct {
-	name       string
-	baseURL    string
-	apiStyle   string
-	apiKeyEnv  string
-	model      string
-	httpClient *http.Client
-	redactor   Redactor
+	name           string
+	baseURL        string
+	apiStyle       string
+	apiKey         string
+	apiKeyRequired bool
+	model          string
+	httpClient     *http.Client
+	redactor       Redactor
 }
 
 func NewOpenAIAdapter(name string, cfg RuntimeConfig, httpClient *http.Client) (*OpenAIAdapter, error) {
@@ -39,9 +40,14 @@ func NewOpenAIAdapter(name string, cfg RuntimeConfig, httpClient *http.Client) (
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Minute}
 	}
+	apiKey := cfg.resolvedAPIKey
+	if apiKey == "" && cfg.APIKeySecret == "" && cfg.APIKeyEnv != "" {
+		apiKey = os.Getenv(cfg.APIKeyEnv)
+	}
 	return &OpenAIAdapter{
 		name: name, baseURL: strings.TrimRight(cfg.BaseURL, "/"), apiStyle: style,
-		apiKeyEnv: cfg.APIKeyEnv, model: cfg.Model, httpClient: httpClient,
+		apiKey: apiKey, apiKeyRequired: cfg.APIKeyEnv != "" || cfg.APIKeySecret != "",
+		model: cfg.Model, httpClient: httpClient,
 		redactor: NewRedactor(cfg.secretValues()...),
 	}, nil
 }
@@ -52,8 +58,8 @@ func (a *OpenAIAdapter) Probe(context.Context) error {
 	if a == nil || a.baseURL == "" {
 		return Failure(FailureUnavailable, ErrRuntimeUnavailable)
 	}
-	if a.apiKeyEnv != "" && os.Getenv(a.apiKeyEnv) == "" {
-		return Failure(FailureUnavailable, fmt.Errorf("%w: environment variable %s is empty", ErrRuntimeUnavailable, a.apiKeyEnv))
+	if a.apiKeyRequired && a.apiKey == "" {
+		return Failure(FailureUnavailable, fmt.Errorf("%w: configured API credential is unavailable", ErrRuntimeUnavailable))
 	}
 	return nil
 }
@@ -111,8 +117,8 @@ func (a *OpenAIAdapter) execute(ctx context.Context, previousResponseID string, 
 		return Result{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if key := os.Getenv(a.apiKeyEnv); key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
+	if a.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+a.apiKey)
 	}
 
 	resp, err := a.httpClient.Do(req)

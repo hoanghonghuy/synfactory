@@ -153,6 +153,13 @@ func runAll(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 }
 
 func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *wakeBus) error {
+	credentials, err := configuredAPICredentials(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("configure api credentials: %w", err)
+	}
+	cfg.OperatorToken = credentials.operatorToken
+	cfg.GitHubWebhookSecret = credentials.webhookSecret
+
 	wake := func() {}
 	if bus != nil {
 		wake = bus.all

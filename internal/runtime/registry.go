@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/hoanghonghuy/synfactory/internal/secrets"
 )
 
 type Registry struct {
@@ -18,17 +20,24 @@ type Registry struct {
 }
 
 func BuildRegistry(cfg Config, supervisor *Supervisor, httpClient *http.Client) (*Registry, error) {
+	return BuildRegistryWithSecrets(context.Background(), cfg, supervisor, httpClient, nil)
+}
+
+func BuildRegistryWithSecrets(ctx context.Context, cfg Config, supervisor *Supervisor, httpClient *http.Client, provider secrets.Provider) (*Registry, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	registry := &Registry{adapters: make(map[string]Adapter, len(cfg.Runtimes)), config: cfg}
 	for name, runtimeCfg := range cfg.Runtimes {
+		resolvedCfg, err := resolveRuntimeSecrets(ctx, runtimeCfg, provider)
+		if err != nil {
+			return nil, fmt.Errorf("resolve runtime %q credentials: %w", name, err)
+		}
 		var adapter Adapter
-		var err error
-		if runtimeCfg.Kind == ProviderOpenAI {
-			adapter, err = NewOpenAIAdapter(name, runtimeCfg, httpClient)
+		if resolvedCfg.Kind == ProviderOpenAI {
+			adapter, err = NewOpenAIAdapter(name, resolvedCfg, httpClient)
 		} else {
-			adapter, err = newPresetAdapter(name, runtimeCfg, supervisor)
+			adapter, err = newPresetAdapter(name, resolvedCfg, supervisor)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("build runtime %q: %w", name, err)

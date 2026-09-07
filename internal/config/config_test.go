@@ -117,6 +117,26 @@ func TestLoadGitHubAppMode(t *testing.T) {
 	}
 }
 
+func TestLoadGitHubAppModeAllowsProviderBackedPrivateKey(t *testing.T) {
+	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
+	t.Setenv("SYNFACTORY_GITHUB_AUTH_MODE", "app")
+	t.Setenv("SYNFACTORY_GITHUB_APP_ID", "12345")
+	t.Setenv("SYNFACTORY_GITHUB_APP_PRIVATE_KEY_FILE", "")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load() error = %v, want provider-backed private key to be allowed", err)
+	}
+}
+
+func TestLoadGitHubOAuthAllowsProviderBackedClientSecret(t *testing.T) {
+	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
+	t.Setenv("SYNFACTORY_GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("SYNFACTORY_GITHUB_OAUTH_CLIENT_SECRET", "")
+	t.Setenv("SYNFACTORY_GITHUB_OAUTH_REDIRECT_URI", "https://example.test/auth/callback")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load() error = %v, want provider-backed OAuth client secret to be allowed", err)
+	}
+}
+
 func TestLoadGitHubAppModeRequiresAppConfiguration(t *testing.T) {
 	t.Setenv("SYNFACTORY_DATABASE_URL", "postgres://example")
 	t.Setenv("SYNFACTORY_GITHUB_AUTH_MODE", "app")
