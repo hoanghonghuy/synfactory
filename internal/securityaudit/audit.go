@@ -46,11 +46,11 @@ func (e Event) Validate() error {
 		return errors.New("security audit occurred_at is required")
 	}
 	for name, value := range map[string]string{
-		"actor_type": e.ActorType,
-		"actor_id": e.ActorID,
-		"action": e.Action,
+		"actor_type":    e.ActorType,
+		"actor_id":      e.ActorID,
+		"action":        e.Action,
 		"resource_type": e.ResourceType,
-		"outcome": e.Outcome,
+		"outcome":       e.Outcome,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("security audit %s is required", name)
