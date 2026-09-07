@@ -15,12 +15,13 @@ func TestSecurityAuditPersistsAndFiltersWithoutSecretMaterial(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	id := fmt.Sprintf("audit-%d", now.UnixNano())
+	actorID := fmt.Sprintf("user-security-test-%d", now.UnixNano())
 
 	event := securityaudit.Event{
 		ID:           id,
 		OccurredAt:   now,
 		ActorType:    "operator",
-		ActorID:      "user-security-test",
+		ActorID:      actorID,
 		Action:       "credential.rotation.stage",
 		ResourceType: "credential",
 		ResourceID:   "github/token",
