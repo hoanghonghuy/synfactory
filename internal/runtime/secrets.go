@@ -13,6 +13,14 @@ import (
 // composition boundary. Adapters receive only the values they need and remain
 // independent from the configured secret backend.
 func resolveRuntimeSecrets(ctx context.Context, cfg RuntimeConfig, provider secrets.Provider) (RuntimeConfig, error) {
+	if provider == nil {
+		configured, err := secrets.ConfiguredFromEnv()
+		if err != nil {
+			return RuntimeConfig{}, fmt.Errorf("configure runtime secret provider: %w", err)
+		}
+		provider = configured
+	}
+
 	resolved := cfg
 	resolved.Env = cloneStringMap(cfg.Env)
 	resolved.resolvedSecretValues = nil
