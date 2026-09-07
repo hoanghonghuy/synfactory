@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -52,8 +53,15 @@ func TestSecurityAuditPersistsAndFiltersWithoutSecretMaterial(t *testing.T) {
 	if got[0].ID != id || got[0].ActorID != event.ActorID || got[0].Action != event.Action {
 		t.Fatalf("ListSecurityAudit() = %#v, want persisted event", got[0])
 	}
-	if string(got[0].Metadata) != string(event.Metadata) {
-		t.Fatalf("metadata = %s, want %s", got[0].Metadata, event.Metadata)
+	var gotMetadata, wantMetadata any
+	if err := json.Unmarshal(got[0].Metadata, &gotMetadata); err != nil {
+		t.Fatalf("decode persisted metadata: %v", err)
+	}
+	if err := json.Unmarshal(event.Metadata, &wantMetadata); err != nil {
+		t.Fatalf("decode expected metadata: %v", err)
+	}
+	if !reflect.DeepEqual(gotMetadata, wantMetadata) {
+		t.Fatalf("metadata = %s, want semantically %s", got[0].Metadata, event.Metadata)
 	}
 
 	conflict := event
