@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -52,7 +53,30 @@ func credentialDiagnostics(ctx context.Context, cfg config.Config, now time.Time
 		}
 	}
 
+	if cfg.GitHubAuthMode == "app" {
+		const logicalName = "github/app-private-key"
+		tracker.Register(logicalName, secrets.CredentialMetadata{Owner: "platform"})
+		value, resolveErr := tracker.Resolve(ctx, logicalName)
+		switch {
+		case resolveErr == nil:
+			if len(bytes.TrimSpace(value.CloneBytes())) == 0 {
+				tracker.RecordUnavailable(logicalName, value.Provider)
+			}
+		case errors.Is(resolveErr, secrets.ErrNotFound) && legacyPrivateKeyFileAvailable(cfg.GitHubAppPrivateKeyFile):
+			tracker.RecordAvailable(logicalName, "legacy-file")
+		}
+	}
+
 	return tracker.Diagnostics(now, credentialExpiryWarning), nil
+}
+
+func legacyPrivateKeyFileAvailable(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func registerCredentialDiagnostics(mux *http.ServeMux, authorizer authz.RequestAuthorizer, cfg config.Config) {
