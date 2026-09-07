@@ -20,9 +20,10 @@ type securityAuditResponse struct {
 	Events []securityaudit.Event `json:"events"`
 }
 
-func registerSecurityAudit(mux *http.ServeMux, authorizer authz.RequestAuthorizer, reader securityAuditReader) {
+func registerSecurityAudit(mux *http.ServeMux, authorizer authz.RequestAuthorizer, reader securityAuditReader, audit securityAuditWriter) {
 	mux.HandleFunc("GET /api/security/audit", func(w http.ResponseWriter, r *http.Request) {
-		if _, err := authorizer.Authorize(r, authz.PermissionSecurityPolicy, ""); err != nil {
+		principal, err := authorizer.Authorize(r, authz.PermissionSecurityPolicy, "")
+		if err != nil {
 			status := http.StatusForbidden
 			if errors.Is(err, authz.ErrUnauthenticated) {
 				status = http.StatusUnauthorized
@@ -38,6 +39,10 @@ func registerSecurityAudit(mux *http.ServeMux, authorizer authz.RequestAuthorize
 		}
 		events, err := reader.ListSecurityAudit(r.Context(), filter)
 		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "security audit unavailable"})
+			return
+		}
+		if err := appendSecurityAudit(r.Context(), audit, principal, "security.audit.read", "security_audit", "", "success"); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "security audit unavailable"})
 			return
 		}
