@@ -2,6 +2,24 @@
 
 Issue #32 treats long-running autonomy as a release property, not a model claim. Soak evidence must come from durable SynFactory state plus explicit fault records while normal review, CI, authorization and repair-budget gates remain enabled.
 
+## Deterministic fault validation
+
+Run the repository-owned deterministic fault harness before a release soak:
+
+```sh
+bash scripts/autonomy-soak.sh validate-faults
+```
+
+The harness runs three focused scenarios without adding production bypasses:
+
+- runtime provider unavailability must fall back to the next configured candidate without replaying the successful candidate;
+- webhook loss is modeled by a full GitHub reconciliation sweep from durable remote truth, and repeating the sweep must deduplicate the recovered events;
+- workflow policy must exhaust bounded repair into park/escalation while independent role capacity remains schedulable.
+
+Each scenario appends one value-free JSON record to `*.fault-validation.jsonl` with its scenario name, timestamps and pass/fail status. Failed test output is printed to stderr but is not copied into the machine-readable evidence file. The command returns non-zero if any scenario fails.
+
+This deterministic harness is intentionally separate from the multi-day dogfood duration. A green harness proves the known recovery contracts remain executable and reproducible; it does not by itself qualify a release.
+
 ## Observe-only run
 
 The runner is non-destructive by default. It samples the Go-owned `/ops` read model and writes JSONL evidence under `./data/autonomy-soak`:
@@ -53,4 +71,4 @@ Transport failures during an intentional API restart are expected transient evid
 
 ## Release evidence
 
-Keep the JSONL and fault log for the exact build/deployment under qualification. Record the deployment commit SHA and relevant runtime configuration beside the evidence; never include operator tokens, GitHub credentials, SSH private keys, raw terminal input/output or other secrets. Multi-day dogfood results should be summarized in the release decision rather than committed as large generated evidence files.
+Keep the JSONL, deterministic fault-validation JSONL and restart fault log for the exact build/deployment under qualification. Record the deployment commit SHA and relevant runtime configuration beside the evidence; never include operator tokens, GitHub credentials, SSH private keys, raw terminal input/output or other secrets. Multi-day dogfood results should be summarized in the release decision rather than committed as large generated evidence files.
