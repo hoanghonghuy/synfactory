@@ -48,6 +48,29 @@ func TestSecurityAuditRequiresSecurityPolicy(t *testing.T) {
 	}
 }
 
+func TestSecurityAuditOperatorEndpointsRequireSecurityPolicy(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "export", method: http.MethodGet, path: "/api/security/audit/export"},
+		{name: "retention", method: http.MethodPost, path: "/api/security/audit/retention", body: `{"cutoff":"2026-09-01T00:00:00Z","limit":100}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			registerSecurityAudit(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, &fakeSecurityAuditOperations{}, &recordingSecurityAuditWriter{})
+			req := httptest.NewRequest(test.method, test.path, bytes.NewBufferString(test.body))
+			res := httptest.NewRecorder()
+			mux.ServeHTTP(res, req)
+			if res.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d", res.Code, http.StatusUnauthorized)
+			}
+		})
+	}
+}
+
 func TestSecurityAuditSearchParsesBoundedFilters(t *testing.T) {
 	reader := &fakeSecurityAuditOperations{events: []securityaudit.Event{{
 		ID:           "audit-1",
@@ -143,7 +166,7 @@ func TestSecurityAuditExportIsBoundedAndAttributed(t *testing.T) {
 func TestSecurityAuditExportRejectsSensitiveMetadata(t *testing.T) {
 	operations := &fakeSecurityAuditOperations{events: []securityaudit.Event{{
 		ID:       "audit-1",
-		Metadata: json.RawMessage(`{"nested":{"access-token":"should-never-export"}}`),
+		Metadata: json.RawMessage(`{"nested":{"github_token":"should-never-export"}}`),
 	}}}
 	audit := &recordingSecurityAuditWriter{}
 	mux := http.NewServeMux()
