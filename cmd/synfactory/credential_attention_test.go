@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hoanghonghuy/synfactory/internal/attention"
+	"github.com/hoanghonghuy/synfactory/internal/config"
 	"github.com/hoanghonghuy/synfactory/internal/secrets"
 )
 
@@ -33,6 +35,7 @@ func (s *fakeCredentialAttentionStore) UpsertAttention(_ context.Context, item a
 
 func TestReconcileCredentialAttentionPreservesOperatorStateAndResolvesRecovery(t *testing.T) {
 	now := time.Date(2026, 9, 7, 8, 0, 0, 0, time.UTC)
+	cfg := config.Config{GitHubAuthMode: "pat"}
 	key, err := attention.DedupeKey("", "", attention.KindCredential, "github/token")
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +59,7 @@ func TestReconcileCredentialAttentionPreservesOperatorStateAndResolvesRecovery(t
 		CredentialHealth: secrets.CredentialHealth{LogicalName: "github/token"},
 		State:            secrets.DiagnosticUnavailable,
 	}}
-	if err := reconcileCredentialAttention(context.Background(), store, diagnostics, now); err != nil {
+	if err := reconcileCredentialAttention(context.Background(), store, cfg, diagnostics, now); err != nil {
 		t.Fatal(err)
 	}
 	item := store.items[key]
@@ -68,7 +71,7 @@ func TestReconcileCredentialAttentionPreservesOperatorStateAndResolvesRecovery(t
 	}
 
 	diagnostics[0].State = secrets.DiagnosticHealthy
-	if err := reconcileCredentialAttention(context.Background(), store, diagnostics, now.Add(time.Minute)); err != nil {
+	if err := reconcileCredentialAttention(context.Background(), store, cfg, diagnostics, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	item = store.items[key]
@@ -77,6 +80,20 @@ func TestReconcileCredentialAttentionPreservesOperatorStateAndResolvesRecovery(t
 	}
 	if item.AssignedTo != "system:credential-monitor" {
 		t.Fatalf("resolver = %q, want system:credential-monitor", item.AssignedTo)
+	}
+}
+
+func TestReconcileCredentialAttentionIgnoresOptionalOAuthSecret(t *testing.T) {
+	store := &fakeCredentialAttentionStore{}
+	diagnostics := []secrets.CredentialDiagnostic{{
+		CredentialHealth: secrets.CredentialHealth{LogicalName: "github/oauth-client-secret"},
+		State:            secrets.DiagnosticUnavailable,
+	}}
+	if err := reconcileCredentialAttention(context.Background(), store, config.Config{GitHubAuthMode: "pat"}, diagnostics, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.items) != 0 {
+		t.Fatalf("optional OAuth secret created attention: %#v", store.items)
 	}
 }
 
@@ -92,19 +109,7 @@ func TestCredentialAttentionMessageDoesNotExposeProviderOrValues(t *testing.T) {
 	if !actionable || severity != attention.SeverityWarning {
 		t.Fatalf("unexpected classification: actionable=%v severity=%q", actionable, severity)
 	}
-	if summary == "" || contains(summary, diagnostic.Provider) {
+	if summary == "" || strings.Contains(summary, diagnostic.Provider) {
 		t.Fatalf("summary leaked provider metadata: %q", summary)
 	}
-}
-
-func contains(value, fragment string) bool {
-	if fragment == "" {
-		return false
-	}
-	for i := 0; i+len(fragment) <= len(value); i++ {
-		if value[i:i+len(fragment)] == fragment {
-			return true
-		}
-	}
-	return false
 }
