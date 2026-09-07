@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -24,6 +25,36 @@ type credentialProbe struct {
 	owner       string
 }
 
+func credentialDiagnostics(ctx context.Context, cfg config.Config, now time.Time) ([]secrets.CredentialDiagnostic, error) {
+	provider, err := configuredSecretProvider()
+	if err != nil {
+		return nil, err
+	}
+	tracker := secrets.NewTrackingProvider(provider)
+	probes := []credentialProbe{
+		{logicalName: "operator/token", legacyValue: cfg.OperatorToken, owner: "platform"},
+		{logicalName: "github/webhook-secret", legacyValue: cfg.GitHubWebhookSecret, owner: "platform"},
+		{logicalName: "github/oauth-client-secret", legacyValue: cfg.GitHubOAuthClientSecret, owner: "platform"},
+		{logicalName: "github/token", legacyValue: cfg.GitHubToken, owner: "platform"},
+	}
+
+	for _, probe := range probes {
+		tracker.Register(probe.logicalName, secrets.CredentialMetadata{Owner: probe.owner})
+		value, resolveErr := tracker.Resolve(ctx, probe.logicalName)
+		if resolveErr == nil {
+			if len(bytes.TrimSpace(value.CloneBytes())) == 0 {
+				tracker.RecordUnavailable(probe.logicalName, value.Provider)
+			}
+			continue
+		}
+		if errors.Is(resolveErr, secrets.ErrNotFound) && strings.TrimSpace(probe.legacyValue) != "" {
+			tracker.RecordAvailable(probe.logicalName, "legacy")
+		}
+	}
+
+	return tracker.Diagnostics(now, credentialExpiryWarning), nil
+}
+
 func registerCredentialDiagnostics(mux *http.ServeMux, authorizer authz.RequestAuthorizer, cfg config.Config) {
 	mux.HandleFunc("GET /api/security/credentials", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := authorizer.Authorize(r, authz.PermissionSecurityPolicy, ""); err != nil {
@@ -35,35 +66,11 @@ func registerCredentialDiagnostics(mux *http.ServeMux, authorizer authz.RequestA
 			return
 		}
 
-		provider, err := configuredSecretProvider()
+		diagnostics, err := credentialDiagnostics(r.Context(), cfg, time.Now())
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "credential provider unavailable"})
 			return
 		}
-		tracker := secrets.NewTrackingProvider(provider)
-		probes := []credentialProbe{
-			{logicalName: "operator/token", legacyValue: cfg.OperatorToken, owner: "platform"},
-			{logicalName: "github/webhook-secret", legacyValue: cfg.GitHubWebhookSecret, owner: "platform"},
-			{logicalName: "github/oauth-client-secret", legacyValue: cfg.GitHubOAuthClientSecret, owner: "platform"},
-			{logicalName: "github/token", legacyValue: cfg.GitHubToken, owner: "platform"},
-		}
-
-		for _, probe := range probes {
-			tracker.Register(probe.logicalName, secrets.CredentialMetadata{Owner: probe.owner})
-			value, resolveErr := tracker.Resolve(r.Context(), probe.logicalName)
-			if resolveErr == nil {
-				if len(bytes.TrimSpace(value.CloneBytes())) == 0 {
-					tracker.RecordUnavailable(probe.logicalName, value.Provider)
-				}
-				continue
-			}
-			if errors.Is(resolveErr, secrets.ErrNotFound) && strings.TrimSpace(probe.legacyValue) != "" {
-				tracker.RecordAvailable(probe.logicalName, "legacy")
-			}
-		}
-
-		writeJSON(w, http.StatusOK, credentialDiagnosticsResponse{
-			Credentials: tracker.Diagnostics(time.Now(), credentialExpiryWarning),
-		})
+		writeJSON(w, http.StatusOK, credentialDiagnosticsResponse{Credentials: diagnostics})
 	})
 }
