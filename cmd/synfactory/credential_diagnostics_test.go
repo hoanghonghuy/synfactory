@@ -65,3 +65,38 @@ func TestCredentialDiagnosticsExposeMetadataWithoutSecretValues(t *testing.T) {
 		t.Fatalf("operator/token diagnostic = %#v", got)
 	}
 }
+
+func TestCredentialDiagnosticsReportPresentEmptySecretUnavailable(t *testing.T) {
+	t.Setenv("SYNFACTORY_SECRET_PROVIDER", "env")
+	t.Setenv("SYNFACTORY_GITHUB_TOKEN", "")
+	mux := http.NewServeMux()
+	registerCredentialDiagnostics(mux, authz.LegacyTokenAuthorizer{Token: "operator-secret"}, config.Config{
+		GitHubToken: "legacy-token-must-not-revive",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/security/credentials", nil)
+	req.Header.Set("Authorization", "Bearer operator-secret")
+	res := httptest.NewRecorder()
+	mux.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+
+	if strings.Contains(res.Body.String(), "legacy-token-must-not-revive") {
+		t.Fatalf("response leaked or revived legacy token: %s", res.Body.String())
+	}
+	var response credentialDiagnosticsResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range response.Credentials {
+		if diagnostic.LogicalName != "github/token" {
+			continue
+		}
+		if diagnostic.Available || diagnostic.Provider != "env" || diagnostic.State != secrets.DiagnosticUnavailable {
+			t.Fatalf("github/token diagnostic = %#v", diagnostic)
+		}
+		return
+	}
+	t.Fatal("github/token diagnostic not found")
+}
