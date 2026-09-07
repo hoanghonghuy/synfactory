@@ -116,10 +116,26 @@ func registerSecurityAudit(mux *http.ServeMux, authorizer authz.RequestAuthorize
 		// Persist attribution before mutation. A failed audit append stops the prune,
 		// so an operator cannot successfully mutate retention without a durable trace.
 		if err := appendSecurityAudit(r.Context(), audit, principal, "security.audit.retention", "security_audit", "retention", "requested"); err != nil {
-			writeJSON(w,”İ]\ÔÙ\šXÙU[˜]˜Z[X›KX\Üİš[™×\İš[™ŞÈ™\œ›ÜˆˆœÙXİ\š]H]Y][˜]˜Z[X›HŸJB‚BB\™]\›‚‚B_B‚BY[]Y\œˆHÜ\˜][ÛœË”[™TÙXİ\š]P]Y]™Y›Ü™J‹ÛÛ^
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "security audit unavailable"})
+			return
+		}
+		deleted, err := operations.PruneSecurityAuditBefore(r.Context(), cutoff, request.Limit)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "security audit retention unavailable"})
+			return
+		}
+		writeJSON(w, http.StatusOK, securityAuditRetentionResponse{Deleted: deleted})
+	})
+}
 
-Kİ]Ù™‹™\]Y\İ“[Z]
-B‚BZYˆ\œˆOHš[Â‚BB]Üš]R”ÓÓŠË‡GGå7FGW56W'f–6UVæf–Æ&ÆRÂÖ·7G&–æu×7G&–æw²&W'&÷"#¢'6V7W&—G’VF—B&WFVçF–öâVæf–Æ&ÆR'Ò —&WGW&à —Ğ —w&—FT¥4ôâ‡rÀ¡ÑÑÀ¹MÑ…ÑÕÍ=,°Í•ÕÉ¥ÑåÕ‘¥ÑI•Ñ•¹Ñ¥½¹I•ÍÁ½¹Í•í•±•Ñ•è‘•±•Ñ•‘ô¤(%ô¤)ô()™Õ¹Œ…ÕÑ¡½É¥é•M•ÕÉ¥ÑåÕ‘¥Ğ¡Ü¡ÑÑÀ¹I•ÍÁ½¹Í•]É¥Ñ•È°È€©¡ÑÑÀ¹I•ÅÕ•ÍĞ°…ÕÑ¡½É¥é•È…ÕÑ¡è¹I•ÅÕ•ÍÑÕÑ¡½É¥é•È¤€¡…ÕÑ¡è¹AÉ¥¹¥Á…°°‰½½°¤ì(%ÁÉ¥¹¥Á…°°•ÉÈ€èô…ÕÑ¡½É¥é•È¹ÕÑ¡½É¥é”¡È°…ÕÑ¡è¹A•Éµ¥ÍÍ¥½¹M•ÕÉ¥ÑåA½±¥ä°€ˆˆ¤(%¥˜•ÉÈ€„ô¹¥°ì($%ÍÑ…ÑÕÌ€èô¡ÑÑÀ¹MÑ…ÑÕÍ½É‰¥‘‘•¸($%¥˜•ÉÉ½ÉÌ¹%Ì¡•ÉÈ°…ÕÑ¡è¹ÉÉU¹…ÕÑ¡•¹Ñ¥…Ñ•¤ì($$%ÍÑ…ÑÕÌ€ô¡ÑÑÀ¹MÑ…ÑÕÍU¹…ÕÑ¡½É¥é•($%ô($%İÉ¥Ñ•)M=8¡Ü° status, map[string]string{"error": err.Error()})
+func authorizeSecurityAudit(w http.ResponseWriter, r *http.Request, authorizer authz.RequestAuthorizer) (authz.Principal, bool) {
+	principal, err := authorizer.Authorize(r, authz.PermissionSecurityPolicy, "")
+	if err != nil {
+		status := http.StatusForbidden
+		if errors.Is(err, authz.ErrUnauthenticated) {
+			status = http.StatusUnauthorized
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return authz.Principal{}, false
 	}
 	return principal, true
@@ -130,7 +146,7 @@ func decodeSecurityAuditRetentionRequest(r *http.Request) (securityAuditRetentio
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		return securityAuditRetentionRequest{}, errors.New!¢invalid retention request")
+		return securityAuditRetentionRequest{}, errors.New("invalid retention request")
 	}
 	request.Cutoff = strings.TrimSpace(request.Cutoff)
 	if request.Cutoff == "" {
@@ -145,7 +161,7 @@ func validateSecurityAuditExport(events []securityaudit.Event) error {
 			continue
 		}
 		var metadata any
-		if err := json.Unmarshal(event.Metadata,& metadata); err != nil {
+		if err := json.Unmarshal(event.Metadata, &metadata); err != nil {
 			return errors.New("invalid audit metadata")
 		}
 		if containsSensitiveAuditField(metadata) {
@@ -213,7 +229,7 @@ func securityAuditFilter(r *http.Request) (securityaudit.Filter, error) {
 		filter.Since = value
 	}
 	if raw := strings.TrimSpace(query.Get("until")); raw != "" {
-		value, err := time.Parse(time.RFC339, raw)
+		value, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
 			return securityaudit.Filter{}, errors.New("until must be RFC3339")
 		}
