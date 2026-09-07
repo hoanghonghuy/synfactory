@@ -55,4 +55,10 @@ func TestSecurityAuditPersistsAndFiltersWithoutSecretMaterial(t *testing.T) {
 	if string(got[0].Metadata) != string(event.Metadata) {
 		t.Fatalf("metadata = %s, want %s", got[0].Metadata, event.Metadata)
 	}
+
+	conflict := event
+	conflict.Action = "credential.rotation.promote"
+	if err := store.AppendSecurityAudit(ctx, conflict); err == nil {
+		t.Fatal("duplicate security audit id succeeded; want fail-closed error")
+	}
 }
