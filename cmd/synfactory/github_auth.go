@@ -20,14 +20,11 @@ func configuredGitHubClient(cfg config.Config) (*githubfactory.Client, bool, err
 
 	switch cfg.GitHubAuthMode {
 	case "pat":
-		value, err := provider.Resolve(context.Background(), "github/token")
-		if isSecretNotFound(err) {
-			return nil, false, nil
-		}
+		token, err := resolveOptionalSecret(context.Background(), provider, "github/token", cfg.GitHubToken)
 		if err != nil {
 			return nil, false, fmt.Errorf("resolve github token: %w", err)
 		}
-		token := strings.TrimSpace(string(value.CloneBytes()))
+		token = strings.TrimSpace(token)
 		if token == "" {
 			return nil, false, nil
 		}
