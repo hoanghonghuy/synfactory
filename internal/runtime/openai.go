@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -39,9 +40,13 @@ func NewOpenAIAdapter(name string, cfg RuntimeConfig, httpClient *http.Client) (
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Minute}
 	}
+	apiKey := cfg.resolvedAPIKey
+	if apiKey == "" && cfg.APIKeySecret == "" && cfg.APIKeyEnv != "" {
+		apiKey = os.Getenv(cfg.APIKeyEnv)
+	}
 	return &OpenAIAdapter{
 		name: name, baseURL: strings.TrimRight(cfg.BaseURL, "/"), apiStyle: style,
-		apiKey: cfg.resolvedAPIKey, apiKeyRequired: cfg.APIKeyEnv != "" || cfg.APIKeySecret != "",
+		apiKey: apiKey, apiKeyRequired: cfg.APIKeyEnv != "" || cfg.APIKeySecret != "",
 		model: cfg.Model, httpClient: httpClient,
 		redactor: NewRedactor(cfg.secretValues()...),
 	}, nil
