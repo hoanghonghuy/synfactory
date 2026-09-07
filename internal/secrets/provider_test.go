@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnvProviderResolvesLogicalNameWithoutLeakingValue(t *testing.T) {
@@ -68,6 +69,32 @@ func TestFileProviderKeepsResolutionInsideConfiguredRoot(t *testing.T) {
 	}
 }
 
+func TestFileProviderExposesValueFreeSourceTimestamp(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "github", "token")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rotatedAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, rotatedAt, rotatedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	metadata, err := (FileProvider{Root: root}).Metadata(context.Background(), "github/token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !metadata.CreatedAt.Equal(rotatedAt) {
+		t.Fatalf("CreatedAt = %v, want %v", metadata.CreatedAt, rotatedAt)
+	}
+	if !metadata.ExpiresAt.IsZero() || metadata.Owner != "" {
+		t.Fatalf("unexpected inferred metadata: %#v", metadata)
+	}
+}
+
 func TestFileProviderRejectsSymlinkEscape(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -81,14 +108,21 @@ func TestFileProviderRejectsSymlinkEscape(t *testing.T) {
 	if _, err := (FileProvider{Root: root}).Resolve(context.Background(), "escape/token"); err == nil {
 		t.Fatal("symlink escape unexpectedly resolved")
 	}
+	if _, err := (FileProvider{Root: root}).Metadata(context.Background(), "escape/token"); err == nil {
+		t.Fatal("symlink escape unexpectedly exposed metadata")
+	}
 }
 
 func TestProvidersClassifyMissingSecrets(t *testing.T) {
 	if _, err := (EnvProvider{Prefix: "SYNFACTORY_SECRET_"}).Resolve(context.Background(), "definitely/missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("env missing error = %v", err)
 	}
-	if _, err := (FileProvider{Root: t.TempDir()}).Resolve(context.Background(), "definitely/missing"); !errors.Is(err, ErrNotFound) {
+	fileProvider := FileProvider{Root: t.TempDir()}
+	if _, err := fileProvider.Resolve(context.Background(), "definitely/missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("file missing error = %v", err)
+	}
+	if _, err := fileProvider.Metadata(context.Background(), "definitely/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("file metadata missing error = %v", err)
 	}
 }
 
