@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/hoanghonghuy/synfactory/internal/attention"
@@ -42,7 +43,7 @@ func runCredentialAttention(ctx context.Context, store credentialAttentionStore,
 				return ctx.Err()
 			}
 			slog.Warn("credential health probe failed", "error", err)
-		} else if err := reconcileCredentialAttention(ctx, store, diagnostics, now); err != nil {
+		} else if err := reconcileCredentialAttention(ctx, store, cfg, diagnostics, now); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return ctx.Err()
 			}
@@ -61,7 +62,7 @@ func runCredentialAttention(ctx context.Context, store credentialAttentionStore,
 	}
 }
 
-func reconcileCredentialAttention(ctx context.Context, store credentialAttentionStore, diagnostics []secrets.CredentialDiagnostic, now time.Time) error {
+func reconcileCredentialAttention(ctx context.Context, store credentialAttentionStore, cfg config.Config, diagnostics []secrets.CredentialDiagnostic, now time.Time) error {
 	if store == nil {
 		return errors.New("credential attention requires store")
 	}
@@ -80,6 +81,9 @@ func reconcileCredentialAttention(ctx context.Context, store credentialAttention
 
 	seen := make(map[string]bool, len(diagnostics))
 	for _, diagnostic := range diagnostics {
+		if !credentialOperationallyRequired(cfg, diagnostic.LogicalName) {
+			continue
+		}
 		key, err := attention.DedupeKey("", "", attention.KindCredential, diagnostic.LogicalName)
 		if err != nil {
 			return err
@@ -133,6 +137,23 @@ func reconcileCredentialAttention(ctx context.Context, store credentialAttention
 		}
 	}
 	return nil
+}
+
+func credentialOperationallyRequired(cfg config.Config, logicalName string) bool {
+	switch logicalName {
+	case "github/token":
+		return cfg.GitHubAuthMode == "pat"
+	case "github/app-private-key":
+		return cfg.GitHubAuthMode == "app"
+	case "github/oauth-client-secret":
+		return strings.TrimSpace(cfg.GitHubOAuthClientID) != ""
+	case "github/webhook-secret":
+		return true
+	case "operator/token":
+		return cfg.TerminalEnabled || strings.TrimSpace(cfg.OperatorToken) != ""
+	default:
+		return false
+	}
 }
 
 func credentialAttentionMessage(diagnostic secrets.CredentialDiagnostic) (attention.Severity, string, string, bool) {
