@@ -9,14 +9,15 @@ import (
 
 var ErrNoStagedRotation = errors.New("no staged credential rotation")
 
-// RotatingProvider keeps the active provider stable while a replacement value
-// is staged and validated. Promotion affects only future Resolve calls; callers
-// that already cloned an active value keep their existing credential until they
-// rebuild naturally.
+// RotatingProvider keeps a per-logical-name snapshot of the last known-good
+// active credential while a replacement is staged. Promotion affects only
+// future Resolve calls; values already handed to callers remain independent
+// clones and are never mutated in place.
 type RotatingProvider struct {
 	active Provider
 
 	mu       sync.RWMutex
+	baseline map[string]Value
 	staged   map[string]Value
 	promoted map[string]Value
 }
@@ -24,6 +25,7 @@ type RotatingProvider struct {
 func NewRotatingProvider(active Provider) *RotatingProvider {
 	return &RotatingProvider{
 		active:   active,
+		baseline: make(map[string]Value),
 		staged:   make(map[string]Value),
 		promoted: make(map[string]Value),
 	}
@@ -36,20 +38,42 @@ func (p *RotatingProvider) Resolve(ctx context.Context, logicalName string) (Val
 	}
 
 	p.mu.RLock()
-	value, ok := p.promoted[name]
+	if value, ok := p.promoted[name]; ok {
+		p.mu.RUnlock()
+		return newValue(value.CloneBytes(), value.Provider), nil
+	}
+	if value, ok := p.baseline[name]; ok {
+		p.mu.RUnlock()
+		return newValue(value.CloneBytes(), value.Provider), nil
+	}
 	p.mu.RUnlock()
-	if ok {
+
+	// Serialize the first resolution so concurrent callers cannot establish
+	// different baselines if the backing source changes during rotation.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if value, ok := p.promoted[name]; ok {
+		return newValue(value.CloneBytes(), value.Provider), nil
+	}
+	if value, ok := p.baseline[name]; ok {
 		return newValue(value.CloneBytes(), value.Provider), nil
 	}
 	if p.active == nil {
-		return Value{}, fmt.Errorf("active secret provider is not configured")
+		return Value{}, errors.New("active secret provider is not configured")
 	}
-	return p.active.Resolve(ctx, name)
+	value, err := p.active.Resolve(ctx, name)
+	if err != nil {
+		return Value{}, err
+	}
+	cached := newValue(value.CloneBytes(), value.Provider)
+	p.baseline[name] = cached
+	return newValue(cached.CloneBytes(), cached.Provider), nil
 }
 
-// Stage resolves the candidate immediately so an unavailable or empty
-// replacement cannot displace the active credential. The staged value remains
-// private to this provider until Promote is called.
+// Stage first establishes the current effective credential as a stable
+// baseline, then resolves and validates the candidate. A mutable backing source
+// therefore cannot replace the active credential merely because its contents
+// changed while a rotation is pending.
 func (p *RotatingProvider) Stage(ctx context.Context, logicalName string, candidate Provider) error {
 	name, err := normalizeLogicalName(logicalName)
 	if err != nil {
@@ -57,6 +81,9 @@ func (p *RotatingProvider) Stage(ctx context.Context, logicalName string, candid
 	}
 	if candidate == nil {
 		return errors.New("candidate secret provider is required")
+	}
+	if _, err := p.Resolve(ctx, name); err != nil {
+		return fmt.Errorf("resolve active secret %q before stage: %w", name, err)
 	}
 	value, err := candidate.Resolve(ctx, name)
 	if err != nil {
