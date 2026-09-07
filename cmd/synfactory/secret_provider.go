@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
 
 	"github.com/hoanghonghuy/synfactory/internal/secrets"
 )
@@ -14,18 +12,7 @@ func configuredSecretProvider() (secrets.Provider, error) {
 }
 
 func resolveOptionalSecret(ctx context.Context, provider secrets.Provider, logicalName, legacyValue string) (string, error) {
-	value, err := provider.Resolve(ctx, logicalName)
-	if err == nil {
-		resolved := strings.TrimSpace(string(value.CloneBytes()))
-		if resolved == "" {
-			return "", fmt.Errorf("secret %q is empty", logicalName)
-		}
-		return resolved, nil
-	}
-	if !isSecretNotFound(err) {
-		return "", fmt.Errorf("resolve secret %q: %w", logicalName, err)
-	}
-	return strings.TrimSpace(legacyValue), nil
+	return secrets.ResolveOptionalString(ctx, provider, logicalName, legacyValue)
 }
 
 func isSecretNotFound(err error) bool {
