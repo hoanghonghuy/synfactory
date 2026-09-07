@@ -8,17 +8,24 @@ cleanup_db=0
 container_name="synfactory-prepush-postgres-$$"
 
 if [ -z "${SYNFACTORY_TEST_DATABASE_URL:-}" ]; then
-  export SYNFACTORY_TEST_DATABASE_URL="postgres://postgres:postgres@localhost:55432/synfactory_test?sslmode=disable"
-  echo "==> Start isolated PostgreSQL on localhost:55432"
+  echo "==> Start isolated PostgreSQL on an ephemeral localhost port"
   docker run --rm -d \
     --name "$container_name" \
     -e POSTGRES_USER=postgres \
     -e POSTGRES_PASSWORD=postgres \
     -e POSTGRES_DB=synfactory_test \
-    -p 55432:5432 \
+    -p 127.0.0.1::5432 \
     postgres:16 >/dev/null
   cleanup_db=1
   trap 'if [ "$cleanup_db" = "1" ]; then docker rm -f "$container_name" >/dev/null 2>&1 || true; fi' EXIT
+
+  port_mapping="$(docker port "$container_name" 5432/tcp)"
+  db_port="${port_mapping##*:}"
+  if ! [[ "$db_port" =~ ^[0-9]+$ ]]; then
+    echo "Could not resolve temporary PostgreSQL port from: $port_mapping" >&2
+    exit 1
+  fi
+  export SYNFACTORY_TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:${db_port}/synfactory_test?sslmode=disable"
 
   ready=0
   for _ in $(seq 1 30); do
