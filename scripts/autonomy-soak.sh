@@ -14,6 +14,7 @@ mkdir -p "$EVIDENCE_DIR"
 RUN_ID="${SYNFACTORY_SOAK_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 EVIDENCE_FILE="$EVIDENCE_DIR/$RUN_ID.jsonl"
 FAULT_FILE="$EVIDENCE_DIR/$RUN_ID.faults.log"
+FAULT_EVIDENCE_FILE="$EVIDENCE_DIR/$RUN_ID.fault-validation.jsonl"
 
 read -r -a COMPOSE_ARGS <<< "$COMPOSE_ARGS_STRING"
 IFS=',' read -r -a FAULT_SERVICES <<< "$FAULT_SEQUENCE"
@@ -54,12 +55,58 @@ restart_service() {
   docker compose "${COMPOSE_ARGS[@]}" restart "$service"
 }
 
+run_fault_scenario() {
+  local name="$1" package="$2" pattern="$3" started_at finished_at tmp status
+  started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  tmp="$(mktemp)"
+  status="passed"
+  if ! go test "$package" -run "$pattern" -count=1 >"$tmp" 2>&1; then
+    status="failed"
+  fi
+  finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"scenario":"%s","started_at":"%s","finished_at":"%s","status":"%s"}\n' \
+    "$name" "$started_at" "$finished_at" "$status" | tee -a "$FAULT_EVIDENCE_FILE" >/dev/null
+  if [[ "$status" != "passed" ]]; then
+    cat "$tmp" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$tmp"
+}
+
+validate_faults() {
+  local failures=0
+  : > "$FAULT_EVIDENCE_FILE"
+
+  run_fault_scenario \
+    "provider_outage_falls_back_without_duplicate_execution" \
+    "./internal/runtime" \
+    '^TestRegistryFallsBackOnUnavailable$' || failures=$((failures + 1))
+
+  run_fault_scenario \
+    "webhook_loss_reconcile_repairs_truth_and_dedupes" \
+    "./internal/github" \
+    '^TestReconcilerEmitsCanonicalEventsWithoutDuplicatingSweep$' || failures=$((failures + 1))
+
+  run_fault_scenario \
+    "bounded_repair_and_independent_capacity" \
+    "./internal/workflow" \
+    '^(TestAutonomyFaultMatrixPreservesBoundedProgress|TestAutonomySelectionKeepsIndependentRoleCapacityUseful)$' || failures=$((failures + 1))
+
+  printf 'fault validation %s complete: scenarios=3 failures=%d evidence=%s\n' \
+    "$RUN_ID" "$failures" "$FAULT_EVIDENCE_FILE"
+  (( failures == 0 ))
+}
+
 case "$MODE" in
   sample)
     sample_health
     ;;
   restart)
     restart_service "${2:-}"
+    ;;
+  validate-faults)
+    validate_faults
     ;;
   run)
     require_positive_integer SYNFACTORY_SOAK_SAMPLES "$SAMPLES"
@@ -84,7 +131,7 @@ case "$MODE" in
     printf 'soak run %s complete: samples=%d transport_failures=%d evidence=%s\n' "$RUN_ID" "$SAMPLES" "$failures" "$EVIDENCE_FILE"
     ;;
   *)
-    echo "usage: $0 [run|sample|restart <api|scheduler|worker>]" >&2
+    echo "usage: $0 [run|sample|restart <api|scheduler|worker>|validate-faults]" >&2
     exit 2
     ;;
 esac
