@@ -1,11 +1,21 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/hoanghonghuy/synfactory/internal/secrets"
 )
+
+type staticSecretProvider struct {
+	value secrets.Value
+	err   error
+}
+
+func (p staticSecretProvider) Resolve(context.Context, string) (secrets.Value, error) {
+	return p.value, p.err
+}
 
 func TestConfiguredSecretProviderDefaultsToEnvironment(t *testing.T) {
 	t.Setenv("SYNFACTORY_SECRET_PROVIDER", "")
@@ -43,5 +53,24 @@ func TestConfiguredSecretProviderRejectsUnknownBackend(t *testing.T) {
 	t.Setenv("SYNFACTORY_SECRET_PROVIDER", "vault")
 	if _, err := configuredSecretProvider(); err == nil {
 		t.Fatal("configuredSecretProvider() error = nil, want unsupported backend error")
+	}
+}
+
+func TestResolveOptionalSecretUsesLegacyOnlyWhenLogicalSecretMissing(t *testing.T) {
+	provider := secrets.EnvProvider{Prefix: "TEST_"}
+	got, err := resolveOptionalSecret(t.Context(), provider, "github/oauth-client-secret", "legacy-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "legacy-secret" {
+		t.Fatalf("resolved secret = %q, want legacy-secret", got)
+	}
+}
+
+func TestResolveOptionalSecretRejectsPresentEmptyLogicalSecret(t *testing.T) {
+	t.Setenv("TEST_GITHUB_OAUTH_CLIENT_SECRET", "   ")
+	provider := secrets.EnvProvider{Prefix: "TEST_"}
+	if _, err := resolveOptionalSecret(t.Context(), provider, "github/oauth-client-secret", "legacy-secret"); err == nil {
+		t.Fatal("resolveOptionalSecret() error = nil, want empty-secret error")
 	}
 }
