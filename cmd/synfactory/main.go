@@ -153,12 +153,12 @@ func runAll(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 }
 
 func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *wakeBus) error {
-	credentials, err := configuredAPICredentials(ctx, cfg)
+	securityRuntime, err := configuredAPISecurityRuntime(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("configure api credentials: %w", err)
 	}
-	cfg.OperatorToken = credentials.operatorToken
-	cfg.GitHubWebhookSecret = credentials.webhookSecret
+	cfg.OperatorToken = securityRuntime.credentials.operatorToken
+	cfg.GitHubWebhookSecret = securityRuntime.credentials.webhookSecret
 
 	wake := func() {}
 	if bus != nil {
@@ -167,7 +167,10 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	metrics := operations.Handler{Store: store, WorkerStaleAfter: cfg.WorkerStaleAfter}
 	authorizer := authz.HybridAuthorizer{
 		Session: authz.SessionAuthorizer{Store: store},
-		Legacy:  authz.LegacyTokenAuthorizer{Token: cfg.OperatorToken},
+		Legacy: authz.LegacyTokenAuthorizer{
+			Token:        cfg.OperatorToken,
+			ResolveToken: securityRuntime.operatorToken,
+		},
 	}
 	operatorAPI := controlcenter.AuthorizedHandler{
 		Handler:    controlcenter.Handler{Store: store, Token: cfg.OperatorToken, WorkerStaleAfter: cfg.WorkerStaleAfter},
@@ -203,7 +206,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	go terminalService.runReaper(ctx)
 
 	mux := http.NewServeMux()
-	mux.Handle("/webhooks/github", githubfactory.NewWebhookHandler(cfg.GitHubWebhookSecret, store, wake))
+	mux.Handle("/webhooks/github", githubfactory.NewResolvingWebhookHandler(securityRuntime.webhookSecret, store, wake))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, healthResponse{Status: "ok", Mode: "api"})
 	})
@@ -219,7 +222,7 @@ func runAPI(ctx context.Context, cfg config.Config, store *postgres.Store, bus *
 	mux.HandleFunc("GET /ops", metrics.JSON)
 	mux.HandleFunc("GET /metrics", metrics.Prometheus)
 	operatorAPI.Register(mux)
-	registerAuthAPI(mux, store, authorizer, cfg)
+	registerAuthAPIWithSecretProvider(mux, store, authorizer, cfg, securityRuntime.provider)
 	attentionAPI.Register(mux)
 	repositoryAPI.Register(mux)
 	terminalService.register(mux)
