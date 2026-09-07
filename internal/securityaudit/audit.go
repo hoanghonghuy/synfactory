@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 )
@@ -70,6 +71,13 @@ func ValidateMetadata(raw json.RawMessage) error {
 	decoder.UseNumber()
 	if err := decoder.Decode(&value); err != nil {
 		return fmt.Errorf("decode security audit metadata: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("security audit metadata must contain exactly one JSON value")
+		}
+		return fmt.Errorf("decode trailing security audit metadata: %w", err)
 	}
 	if err := rejectSensitive(value); err != nil {
 		return err
