@@ -47,9 +47,9 @@ func (p *RotatingProvider) Resolve(ctx context.Context, logicalName string) (Val
 	return p.active.Resolve(ctx, name)
 }
 
-// Stage resolves the candidate immediately so an unavailable replacement
-// cannot displace the active credential. The staged value remains private to
-// this provider until Promote is called.
+// Stage resolves the candidate immediately so an unavailable or empty
+// replacement cannot displace the active credential. The staged value remains
+// private to this provider until Promote is called.
 func (p *RotatingProvider) Stage(ctx context.Context, logicalName string, candidate Provider) error {
 	name, err := normalizeLogicalName(logicalName)
 	if err != nil {
@@ -61,6 +61,9 @@ func (p *RotatingProvider) Stage(ctx context.Context, logicalName string, candid
 	value, err := candidate.Resolve(ctx, name)
 	if err != nil {
 		return fmt.Errorf("resolve staged secret %q: %w", name, err)
+	}
+	if len(value.CloneBytes()) == 0 {
+		return fmt.Errorf("staged secret %q is empty", name)
 	}
 
 	p.mu.Lock()
