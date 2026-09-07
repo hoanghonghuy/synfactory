@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 )
@@ -12,6 +13,17 @@ const (
 	RotationStable   RotationState = "stable"
 	RotationStaged   RotationState = "staged"
 	RotationRequired RotationState = "required"
+)
+
+type DiagnosticState string
+
+const (
+	DiagnosticHealthy          DiagnosticState = "healthy"
+	DiagnosticExpiring         DiagnosticState = "expiring"
+	DiagnosticExpired          DiagnosticState = "expired"
+	DiagnosticUnavailable      DiagnosticState = "unavailable"
+	DiagnosticRotationStaged   DiagnosticState = "rotation_staged"
+	DiagnosticRotationRequired DiagnosticState = "rotation_required"
 )
 
 type CredentialMetadata struct {
@@ -30,6 +42,11 @@ type CredentialHealth struct {
 	LastFailure       time.Time     `json:"last_failure,omitempty"`
 	RotationState     RotationState `json:"rotation_state"`
 	Available         bool          `json:"available"`
+}
+
+type CredentialDiagnostic struct {
+	CredentialHealth
+	State DiagnosticState `json:"state"`
 }
 
 // TrackingProvider decorates a Provider with concurrency-safe, value-free
@@ -107,5 +124,43 @@ func (p *TrackingProvider) Snapshot() []CredentialHealth {
 	for _, health := range p.health {
 		result = append(result, health)
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].LogicalName < result[j].LogicalName
+	})
 	return result
+}
+
+// Diagnostics derives operator-safe health states without mutating rotation
+// metadata or exposing secret material. An expiry warning window <= 0 disables
+// the pre-expiry state while still reporting already-expired credentials.
+func (p *TrackingProvider) Diagnostics(now time.Time, expiryWarning time.Duration) []CredentialDiagnostic {
+	now = now.UTC()
+	snapshot := p.Snapshot()
+	result := make([]CredentialDiagnostic, 0, len(snapshot))
+	for _, health := range snapshot {
+		result = append(result, CredentialDiagnostic{
+			CredentialHealth: health,
+			State:            diagnosticState(health, now, expiryWarning),
+		})
+	}
+	return result
+}
+
+func diagnosticState(health CredentialHealth, now time.Time, expiryWarning time.Duration) DiagnosticState {
+	if !health.Available && (!health.LastFailure.IsZero() || !health.LastSuccessfulUse.IsZero()) {
+		return DiagnosticUnavailable
+	}
+	if !health.ExpiresAt.IsZero() && !health.ExpiresAt.After(now) {
+		return DiagnosticExpired
+	}
+	switch health.RotationState {
+	case RotationRequired:
+		return DiagnosticRotationRequired
+	case RotationStaged:
+		return DiagnosticRotationStaged
+	}
+	if expiryWarning > 0 && !health.ExpiresAt.IsZero() && !health.ExpiresAt.After(now.Add(expiryWarning)) {
+		return DiagnosticExpiring
+	}
+	return DiagnosticHealthy
 }
