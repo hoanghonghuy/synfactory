@@ -38,7 +38,7 @@ type RuntimeConfig struct {
 	BudgetOutputTokenLimit int64             `json:"budget_output_token_limit,omitempty"`
 	RoutingCapabilityScore int64             `json:"routing_capability_score,omitempty"`
 
-	resolvedAPIKey        string
+	resolvedAPIKey       string
 	resolvedSecretValues []string
 }
 
