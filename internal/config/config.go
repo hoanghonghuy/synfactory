@@ -122,15 +122,12 @@ func Load() (Config, error) {
 		if cfg.GitHubAppID <= 0 {
 			return Config{}, fmt.Errorf("SYNFACTORY_GITHUB_APP_ID must be positive when SYNFACTORY_GITHUB_AUTH_MODE=app")
 		}
-		if cfg.GitHubAppPrivateKeyFile == "" {
-			return Config{}, fmt.Errorf("SYNFACTORY_GITHUB_APP_PRIVATE_KEY_FILE is required when SYNFACTORY_GITHUB_AUTH_MODE=app")
-		}
 	default:
 		return Config{}, fmt.Errorf("unsupported SYNFACTORY_GITHUB_AUTH_MODE %q (want pat or app)", cfg.GitHubAuthMode)
 	}
 	oauthConfigured := cfg.GitHubOAuthClientID != "" || cfg.GitHubOAuthClientSecret != "" || cfg.GitHubOAuthRedirectURI != ""
-	if oauthConfigured && (cfg.GitHubOAuthClientID == "" || cfg.GitHubOAuthClientSecret == "" || cfg.GitHubOAuthRedirectURI == "") {
-		return Config{}, errors.New("GitHub OAuth requires SYNFACTORY_GITHUB_OAUTH_CLIENT_ID, SYNFACTORY_GITHUB_OAUTH_CLIENT_SECRET and SYNFACTORY_GITHUB_OAUTH_REDIRECT_URI together")
+	if oauthConfigured && (cfg.GitHubOAuthClientID == "" || cfg.GitHubOAuthRedirectURI == "") {
+		return Config{}, errors.New("GitHub OAuth requires SYNFACTORY_GITHUB_OAUTH_CLIENT_ID and SYNFACTORY_GITHUB_OAUTH_REDIRECT_URI together; client secret may be supplied by the configured secret provider")
 	}
 	if cfg.TerminalEnabled && strings.TrimSpace(cfg.OperatorToken) == "" {
 		return Config{}, errors.New("SYNFACTORY_OPERATOR_TOKEN is required when SYNFACTORY_TERMINAL_ENABLED=true")
