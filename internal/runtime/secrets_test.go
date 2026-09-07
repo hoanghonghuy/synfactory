@@ -11,7 +11,7 @@ import (
 type runtimeSecretProvider map[string][]byte
 
 func (p runtimeSecretProvider) Resolve(_ context.Context, logicalName string) (secrets.Value, error) {
-	value, ok := p[logicalName]
+	_, ok := p[logicalName]
 	if !ok {
 		return secrets.Value{}, secrets.ErrNotFound
 	}
