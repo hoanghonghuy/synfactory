@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hoanghonghuy/synfactory/internal/config"
 	"github.com/hoanghonghuy/synfactory/internal/secrets"
 )
 
@@ -72,5 +73,50 @@ func TestResolveOptionalSecretRejectsPresentEmptyLogicalSecret(t *testing.T) {
 	provider := secrets.EnvProvider{Prefix: "TEST_"}
 	if _, err := resolveOptionalSecret(t.Context(), provider, "github/oauth-client-secret", "legacy-secret"); err == nil {
 		t.Fatal("resolveOptionalSecret() error = nil, want empty-secret error")
+	}
+}
+
+func TestConfiguredAPICredentialsPreferLogicalSecrets(t *testing.T) {
+	t.Setenv("SYNFACTORY_SECRET_PROVIDER", "env")
+	t.Setenv("SYNFACTORY_OPERATOR_TOKEN", "provider-operator")
+	t.Setenv("SYNFACTORY_GITHUB_WEBHOOK_SECRET", "provider-webhook")
+
+	got, err := configuredAPICredentials(t.Context(), config.Config{
+		OperatorToken:       "legacy-operator",
+		GitHubWebhookSecret: "legacy-webhook",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.operatorToken != "provider-operator" {
+		t.Fatalf("operator token = %q, want provider-operator", got.operatorToken)
+	}
+	if got.webhookSecret != "provider-webhook" {
+		t.Fatalf("webhook secret = %q, want provider-webhook", got.webhookSecret)
+	}
+}
+
+func TestConfiguredAPICredentialsUseLegacyOnlyWhenLogicalSecretsMissing(t *testing.T) {
+	t.Setenv("SYNFACTORY_SECRET_PROVIDER", "env")
+
+	got, err := configuredAPICredentials(t.Context(), config.Config{
+		OperatorToken:       "legacy-operator",
+		GitHubWebhookSecret: "legacy-webhook",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.operatorToken != "legacy-operator" || got.webhookSecret != "legacy-webhook" {
+		t.Fatalf("configuredAPICredentials() = %#v, want legacy credentials", got)
+	}
+}
+
+func TestConfiguredAPICredentialsRejectPresentEmptyLogicalSecret(t *testing.T) {
+	t.Setenv("SYNFACTORY_SECRET_PROVIDER", "env")
+	t.Setenv("SYNFACTORY_OPERATOR_TOKEN", "   ")
+
+	_, err := configuredAPICredentials(t.Context(), config.Config{OperatorToken: "legacy-operator"})
+	if err == nil {
+		t.Fatal("configuredAPICredentials() error = nil, want empty-secret error")
 	}
 }
