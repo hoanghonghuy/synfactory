@@ -113,3 +113,32 @@ LIMIT $8`
 	}
 	return events, nil
 }
+
+func (s *Store) PruneSecurityAuditBefore(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
+	if cutoff.IsZero() {
+		return 0, fmt.Errorf("security audit retention cutoff is required")
+	}
+	if limit <= 0 || limit > 5000 {
+		return 0, fmt.Errorf("security audit retention limit must be between 1 and 5000")
+	}
+	result, err := s.db.ExecContext(ctx, `
+WITH candidates AS (
+    SELECT id
+    FROM security_audit_events
+    WHERE occurred_at < $1
+    ORDER BY occurred_at ASC, id ASC
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+DELETE FROM security_audit_events AS audit
+USING candidates
+WHERE audit.id = candidates.id`, cutoff.UTC(), limit)
+	if err != nil {
+		return 0, fmt.Errorf("prune security audit events: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count pruned security audit events: %w", err)
+	}
+	return deleted, nil
+}
