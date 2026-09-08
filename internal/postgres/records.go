@@ -61,6 +61,7 @@ type NewJob struct {
 	Priority      int
 	MaxAttempts   int
 	AvailableAt   time.Time
+	Requirements  domain.JobRequirements
 	Metadata      json.RawMessage
 }
 
