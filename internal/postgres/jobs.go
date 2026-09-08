@@ -283,6 +283,9 @@ func metadataWithRequirements(metadata json.RawMessage, requirements domain.JobR
 			return nil, fmt.Errorf("decode job metadata: %w", err)
 		}
 	}
+	if values == nil {
+		values = map[string]any{}
+	}
 	values["requirements"] = requirements.Normalized()
 	encoded, err := json.Marshal(values)
 	if err != nil {
