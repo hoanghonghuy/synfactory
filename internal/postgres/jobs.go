@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -32,6 +33,10 @@ func (s *Store) CreateJob(ctx context.Context, job NewJob) (domain.Job, bool, er
 	if job.AvailableAt.IsZero() {
 		job.AvailableAt = time.Now().UTC()
 	}
+	metadata, err := metadataWithRequirements(job.Metadata, job.Requirements)
+	if err != nil {
+		return domain.Job{}, false, err
+	}
 
 	row := s.db.QueryRowContext(ctx, `
 INSERT INTO jobs (
@@ -51,7 +56,7 @@ RETURNING `+jobColumns,
 		job.Priority,
 		job.MaxAttempts,
 		job.AvailableAt,
-		jsonOrEmpty(job.Metadata),
+		metadata,
 	)
 	created, err := scanJob(row)
 	if err == nil {
@@ -86,12 +91,21 @@ func (s *Store) ClaimJob(ctx context.Context, workerID string, now time.Time, le
 
 	row := s.db.QueryRowContext(ctx, `
 WITH candidate AS (
-    SELECT id
-    FROM jobs
-    WHERE status IN ('queued', 'retry_wait')
-      AND available_at <= $1
-    ORDER BY priority DESC, available_at ASC, created_at ASC
-    FOR UPDATE SKIP LOCKED
+    SELECT j.id
+    FROM jobs AS j
+    LEFT JOIN workers AS w ON w.id = $2
+    WHERE j.status IN ('queued', 'retry_wait')
+      AND j.available_at <= $1
+      AND (w.id IS NULL OR w.draining = FALSE)
+      AND (
+          COALESCE(j.metadata->'requirements', '{}'::jsonb) = '{}'::jsonb
+          OR (
+              w.id IS NOT NULL
+              AND COALESCE(w.metadata->'capabilities', '{}'::jsonb) @> COALESCE(j.metadata->'requirements', '{}'::jsonb)
+          )
+      )
+    ORDER BY j.priority DESC, j.available_at ASC, j.created_at ASC
+    FOR UPDATE OF j SKIP LOCKED
     LIMIT 1
 )
 UPDATE jobs AS j
@@ -257,6 +271,24 @@ WHERE status = 'running'
 		return 0, fmt.Errorf("commit lease recovery: %w", err)
 	}
 	return leasedCount + runningCount, nil
+}
+
+func metadataWithRequirements(metadata json.RawMessage, requirements domain.JobRequirements) (json.RawMessage, error) {
+	if requirements.Empty() {
+		return jsonOrEmpty(metadata), nil
+	}
+	values := map[string]any{}
+	if len(metadata) > 0 {
+		if err := json.Unmarshal(metadata, &values); err != nil {
+			return nil, fmt.Errorf("decode job metadata: %w", err)
+		}
+	}
+	values["requirements"] = requirements.Normalized()
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return nil, fmt.Errorf("encode job requirements: %w", err)
+	}
+	return encoded, nil
 }
 
 func scanJob(row rowScanner) (domain.Job, error) {
