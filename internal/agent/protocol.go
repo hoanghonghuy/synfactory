@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 	"sync"
+
+	"github.com/hoanghonghuy/synfactory/internal/domain"
 )
 
 var (
@@ -35,10 +37,11 @@ type Session struct {
 }
 
 type Heartbeat struct {
-	WorkerID          string `json:"worker_id"`
-	SessionID         string `json:"session_id"`
-	Sequence          uint64 `json:"sequence"`
-	CapabilityVersion int    `json:"capability_version"`
+	WorkerID          string                    `json:"worker_id"`
+	SessionID         string                    `json:"session_id"`
+	Sequence          uint64                    `json:"sequence"`
+	CapabilityVersion int                       `json:"capability_version"`
+	Capabilities      domain.WorkerCapabilities `json:"capabilities"`
 }
 
 type LeaseIdentity struct {
