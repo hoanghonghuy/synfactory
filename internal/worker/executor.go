@@ -281,7 +281,7 @@ func (w *Worker) failJob(ctx context.Context, job domain.Job, runErr error) erro
 }
 
 func (w *Worker) heartbeatLoop(ctx context.Context) {
-	worker := postgres.Worker{ID: w.cfg.ID, Host: w.cfg.Host, Capacity: w.cfg.Capacity}
+	worker := postgres.Worker{ID: w.cfg.ID, Host: w.cfg.Host, Capacity: w.cfg.Capacity, Metadata: workerCapabilityMetadata()}
 	for {
 		if _, err := w.store.HeartbeatWorker(ctx, worker, w.now()); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("worker heartbeat failed", "worker", w.cfg.ID, "error", err)
