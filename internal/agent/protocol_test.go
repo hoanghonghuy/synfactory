@@ -112,24 +112,23 @@ func TestCancelIsTransportFactAndIdentityBound(t *testing.T) {
 	}
 }
 
-func TestStatusIsBoundedAndRejectsSensitiveMetadata(t *testing.T) {
+func TestStatusUsesTypedBoundedEvidenceMetadata(t *testing.T) {
 	m := manager()
 	s, err := m.Connect(context.Background(), ConnectRequest{WorkerID: "worker-1"}, "valid")
 	if err != nil {
 		t.Fatal(err)
 	}
 	identity := LeaseIdentity{WorkerID: "worker-1", JobID: "job-1", RunID: "run-1", Revision: "abc123"}
-	if err := m.RecordStatus(s, 1, Status{Identity: identity, State: "running", Metadata: map[string]string{"phase": "verify"}}); err != nil {
+	exitCode := 0
+	digest := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := m.RecordStatus(s, 1, Status{Identity: identity, State: "running", Evidence: EvidenceRef{SHA256: digest}, ExitCode: &exitCode}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.RecordStatus(s, 2, Status{Identity: identity, State: "running", Metadata: map[string]string{"access_token": "do-not-persist"}}); !errors.Is(err, ErrInvalidMessage) {
-		t.Fatalf("sensitive metadata error = %v", err)
+	if err := m.RecordStatus(s, 2, Status{Identity: identity, State: "running", Evidence: EvidenceRef{SHA256: "not-a-digest"}}); !errors.Is(err, ErrInvalidMessage) {
+		t.Fatalf("invalid evidence digest error = %v", err)
 	}
-	tooLarge := make(map[string]string, MaxStatusMetadataEntries+1)
-	for i := 0; i < MaxStatusMetadataEntries+1; i++ {
-		tooLarge[string(rune('a'+i))] = "value"
-	}
-	if err := m.RecordStatus(s, 3, Status{Identity: identity, State: "running", Metadata: tooLarge}); !errors.Is(err, ErrInvalidMessage) {
-		t.Fatalf("oversized metadata error = %v", err)
+	badExit := 999
+	if err := m.RecordStatus(s, 3, Status{Identity: identity, State: "running", ExitCode: &badExit}); !errors.Is(err, ErrInvalidMessage) {
+		t.Fatalf("invalid exit code error = %v", err)
 	}
 }

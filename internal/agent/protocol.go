@@ -73,9 +73,14 @@ type CancelAck struct {
 }
 
 type Status struct {
-	Identity LeaseIdentity     `json:"identity"`
-	State    string            `json:"state"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	Identity LeaseIdentity `json:"identity"`
+	State    string        `json:"state"`
+	Evidence EvidenceRef   `json:"evidence,omitempty"`
+	ExitCode *int          `json:"exit_code,omitempty"`
+}
+
+type EvidenceRef struct {
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 type SessionManager struct {
@@ -240,11 +245,6 @@ func (m *SessionManager) RecordCancelAck(session Session, sequence uint64, ack C
 	return true, nil
 }
 
-const (
-	MaxStatusMetadataEntries    = 16
-	MaxStatusMetadataValueBytes = 256
-)
-
 func (m *SessionManager) RecordStatus(session Session, sequence uint64, status Status) error {
 	if status.Identity.WorkerID != session.WorkerID || !status.Identity.valid() || !validStatus(status) {
 		return ErrInvalidMessage
@@ -256,28 +256,26 @@ func (m *SessionManager) RecordStatus(session Session, sequence uint64, status S
 }
 
 func validStatus(status Status) bool {
-	state := strings.TrimSpace(status.State)
-	if state == "" || len(state) > 64 || len(status.Metadata) > MaxStatusMetadataEntries {
+	switch status.State {
+	case "running", "cancelling", "cancelled", "succeeded", "failed":
+	default:
 		return false
 	}
-	for key, value := range status.Metadata {
-		key = strings.TrimSpace(strings.ToLower(key))
-		if key == "" || len(key) > 64 || len(value) > MaxStatusMetadataValueBytes || sensitiveMetadataKey(key) {
+	if status.ExitCode != nil && (*status.ExitCode < -1 || *status.ExitCode > 255) {
+		return false
+	}
+	if status.Evidence.SHA256 == "" {
+		return true
+	}
+	if len(status.Evidence.SHA256) != 64 {
+		return false
+	}
+	for _, c := range status.Evidence.SHA256 {
+		if !strings.ContainsRune("0123456789abcdef", c) {
 			return false
 		}
 	}
 	return true
-}
-
-func sensitiveMetadataKey(key string) bool {
-	replacer := strings.NewReplacer("-", "_", " ", "_")
-	key = replacer.Replace(strings.ToLower(key))
-	for _, fragment := range []string{"token", "secret", "password", "credential", "authorization", "cookie", "private_key", "raw_terminal"} {
-		if strings.Contains(key, fragment) {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *SessionManager) acceptLocked(session Session, sequence uint64) (*workerState, error) {
