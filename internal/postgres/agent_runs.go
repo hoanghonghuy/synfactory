@@ -104,6 +104,21 @@ func (s *Store) AcquireAgentRun(ctx context.Context, workerID string, now time.T
 		return AgentRun{}, false, fmt.Errorf("load active agent run: %w", err)
 	}
 
+	var occupied bool
+	if err := tx.QueryRowContext(ctx, `
+SELECT EXISTS (
+    SELECT 1
+    FROM jobs
+    WHERE status = 'running'
+      AND lease_owner = $1
+      AND lease_until > $2
+)`, workerID, now).Scan(&occupied); err != nil {
+		return AgentRun{}, false, fmt.Errorf("check agent worker ownership: %w", err)
+	}
+	if occupied {
+		return AgentRun{}, false, fmt.Errorf("agent worker owns a running lease without a matching active run")
+	}
+
 	leaseUntil := now.Add(leaseDuration)
 	claimed, err := scanJob(tx.QueryRowContext(ctx, `
 WITH candidate AS (

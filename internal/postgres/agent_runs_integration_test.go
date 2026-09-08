@@ -191,3 +191,39 @@ func TestExpiredAgentRunUsesExistingRecoverySemantics(t *testing.T) {
 		t.Fatalf("run status = %s", status)
 	}
 }
+
+func TestAcquireAgentRunFailsClosedWhenRunningLeaseHasNoMatchingActiveRun(t *testing.T) {
+	store := openTestStore(t)
+	repo := seedRepository(t, store)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if _, err := store.HeartbeatAgentWorker(ctx, Worker{ID: "worker-1", Capacity: 1}, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"job-owned", "job-next"} {
+		if _, _, err := store.CreateJob(ctx, NewJob{
+			ID: id, DedupeKey: id + "-key", RepositoryID: repo.ID, Kind: "implementation",
+			Role: domain.RoleDev, Subject: id, Revision: id + "-rev", AvailableAt: now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owned, ok, err := store.AcquireAgentRun(ctx, "worker-1", now, time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("initial acquire: ok=%v err=%v", ok, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE runs SET status = 'succeeded', finished_at = $2 WHERE id = $1`, owned.Run.ID, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := store.AcquireAgentRun(ctx, "worker-1", now.Add(2*time.Second), time.Minute); err == nil || ok {
+		t.Fatalf("mismatched running ownership must fail closed: ok=%v err=%v", ok, err)
+	}
+	next, err := store.GetJob(ctx, "job-next")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Status != domain.JobQueued || next.LeaseOwner != "" {
+		t.Fatalf("second job was claimed despite unresolved running ownership: %#v", next)
+	}
+}
